@@ -25,37 +25,9 @@ const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matc
 // ----- Initialization -----
 
 export function initUI(): void {
-  setupThemeToggle();
   setupPatternSelector();
   setupPanelTabs();
   selectPattern('XX');
-}
-
-// ----- Theme Toggle -----
-
-function setupThemeToggle(): void {
-  const toggle = document.getElementById('theme-toggle') as HTMLButtonElement;
-  if (!toggle) return;
-
-  const saved = localStorage.getItem('theme');
-  if (saved === 'light') {
-    document.documentElement.setAttribute('data-theme', 'light');
-    toggle.setAttribute('aria-label', 'Switch to dark mode');
-    toggle.textContent = '☀️';
-  } else {
-    document.documentElement.setAttribute('data-theme', 'dark');
-    toggle.setAttribute('aria-label', 'Switch to light mode');
-    toggle.textContent = '🌙';
-  }
-
-  toggle.addEventListener('click', () => {
-    const current = document.documentElement.getAttribute('data-theme');
-    const next = current === 'dark' ? 'light' : 'dark';
-    document.documentElement.setAttribute('data-theme', next);
-    localStorage.setItem('theme', next);
-    toggle.setAttribute('aria-label', `Switch to ${next === 'dark' ? 'light' : 'dark'} mode`);
-    toggle.textContent = next === 'dark' ? '🌙' : '☀️';
-  });
 }
 
 // ----- Panel Tabs -----

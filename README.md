@@ -2,115 +2,40 @@
 
 > `Noise Protocol` · `X25519` · `AES-256-GCM` · `HKDF-SHA-256`
 
-Interactive browser-based demonstration of the **Noise Protocol Framework** — a framework for building secure channel protocols from composable handshake patterns.
+## What It Is
+
+The **Noise Protocol Framework** is a framework for constructing cryptographic handshake protocols from composable patterns. Instead of negotiating cipher suites like TLS, you choose a **handshake pattern** — a fixed sequence of **X25519** (Curve25519 ECDH) Diffie-Hellman operations — and the security properties follow deterministically from the pattern definition. Key material is derived throughout the handshake using **HKDF-SHA-256** applied to a chaining key and running handshake hash; once the handshake completes, both parties hold symmetric **AES-256-GCM** transport keys with independent send and receive nonce counters. The security model is asymmetric during the handshake (static and ephemeral Diffie-Hellman key pairs) and symmetric during transport (128-bit-keyed AEAD encryption). The optional PSK mode used in IKpsk2 adds a pre-shared symmetric secret as a post-quantum defensive hedge without changing the handshake round-trips.
+
+## When to Use It
+
+- **You need a secure channel without TLS PKI** — Noise eliminates certificate authorities, cipher-suite negotiation, and downgrade attacks; the pattern chosen at design time determines all authentication and secrecy properties with no runtime negotiation.
+- **You need precisely scoped authentication** — patterns such as XX (mutual), NK (known responder static key), NN (anonymous), and IKpsk2 (mutual + PSK) let you express exactly the authentication model your application requires, not whatever TLS negotiates.
+- **You are building a peer-to-peer or embedded transport** — Noise is designed for application-layer use where PKI infrastructure is absent or impractical, such as VPN tunnels, IoT devices, or payment-channel networks.
+- **You require proven forward secrecy** — every Noise pattern uses ephemeral X25519 key pairs per session, so past sessions remain secure even if long-term static keys are later compromised.
+- **Do not use Noise** when you need interoperability with existing TLS-based infrastructure (web servers, browsers, HTTPS APIs) — Noise is not TLS and does not speak the TLS record protocol.
+
+## Live Demo
 
 **[Live Demo →](https://systemslibrarian.github.io/crypto-lab-noise-pipe/)**
 
-Based on the [Noise Protocol Framework, Revision 34](https://noiseprotocol.org/noise.html).
+Select one of twelve handshake patterns (NN, NK, NX, KN, KK, KX, XN, XK, XX, IX, IK, IKpsk2) to view its complete message sequence and security properties. Step through each handshake message one at a time, observing real X25519 DH scalar multiplications, chaining key evolution via HKDF-SHA-256, and running handshake hash updates. After handshake completion, encrypt and decrypt plaintext messages using the derived AES-256-GCM transport keys with live nonce tracking; a Pattern Comparison panel shows NN, XX, IK, and IKpsk2 side-by-side, and a WireGuard Deep Dive panel maps IKpsk2 token-by-token to WireGuard's actual Initiator and Responder messages.
+
+## What Can Go Wrong
+
+- **Wrong pattern chosen for the threat model** — selecting NN when authentication is required means either party can be impersonated by anyone; Noise provides no runtime negotiation or fallback to detect this mismatch.
+- **IK or IKpsk2 with an unverified static key** — these patterns assume the initiator already holds the responder's authentic static public key; if this key is substituted by an attacker (e.g., via a compromised key-distribution channel), the responder can be fully impersonated without breaking X25519.
+- **AES-256-GCM nonce counter exhaustion** — the transport nonce is a 64-bit counter; a session that encrypts 2⁶⁴ messages without rekeying will repeat nonces, catastrophically breaking AES-GCM's authentication and confidentiality guarantees.
+- **PSK reuse in IKpsk2** — the pre-shared key must be rotated out-of-band; a long-lived PSK that is never rotated steadily erodes its post-quantum and identity-hiding contributions, especially if the PSK is shared across multiple sessions.
+- **Handshake hash not bound at the application layer** — if the application does not verify the channel binding (the final handshake hash) out-of-band or via a higher-level protocol message, a network-level adversary can attempt session confusion attacks across concurrent connections.
+
+## Real-World Usage
+
+- **WireGuard** — uses the Noise IKpsk2 pattern as its entire VPN handshake; the pattern's mutual static-key authentication, ephemeral forward secrecy, and PSK layer map directly to WireGuard's Initiator and Responder handshake messages ([WireGuard paper, Donenfeld 2017](https://www.wireguard.com/papers/wireguard.pdf)).
+- **Lightning Network** — BOLT #8 specifies Noise_XK_secp256k1_ChaChaPoly_SHA256 for encrypted transport between Lightning nodes, providing forward secrecy and responder identity hiding without a PKI.
+- **WhatsApp** — the transport layer between WhatsApp clients and servers uses a Noise-based protocol, providing forward secrecy and mutual authentication independently of the Signal end-to-end encryption layer.
+- **libp2p** — the peer-to-peer networking library used by IPFS and Ethereum clients implements Noise XX as its default secure channel protocol (libp2p Noise spec), providing mutual authentication and identity hiding for both peers.
 
 ---
-
-## Overview
-
-Noise is a framework for constructing cryptographic handshake protocols. Instead of negotiating cipher suites like TLS, you choose a **handshake pattern** — a fixed sequence of Diffie-Hellman operations — and the security properties follow deterministically.
-
-This demo lets you:
-
-1. **Select a handshake pattern** (NN, NK, NX, KN, KK, KX, XN, XK, XX, IX, IK, IKpsk2) and see its message flow and security properties
-2. **Step through the handshake** message by message, with real X25519 DH outputs, chaining key evolution, and handshake hash updates
-3. **Encrypt and decrypt messages** using the derived transport keys (AES-256-GCM with nonce tracking)
-4. **Compare patterns** side-by-side: NN vs XX vs IK vs IKpsk2
-5. **Deep dive into WireGuard** — how IKpsk2 maps to WireGuard's handshake messages
-
-All cryptographic operations are **real** — X25519 via `@noble/curves`, AES-256-GCM and HKDF-SHA-256 via WebCrypto. No simulated math.
-
-## Patterns Covered
-
-| Pattern | Auth       | Forward Secrecy | Identity Hiding | Real-World Use |
-|---------|------------|-----------------|-----------------|----------------|
-| NN      | None       | Full            | Both            | Anonymous tunneling |
-| NK      | None       | Full            | Initiator       | Known server connection |
-| NX      | None       | Full            | Initiator       | TOFU server auth |
-| KN      | One-way    | Full            | None            | Device-to-server |
-| KK      | Mutual     | Full            | None            | Peer-to-peer w/ pre-shared keys |
-| KX      | Mutual     | Full            | Responder       | Authenticated session w/ privacy |
-| XN      | One-way    | Full            | Initiator       | Client → relay |
-| XK      | Mutual     | Full            | Initiator       | Signal-like flows |
-| XX      | Mutual     | Full            | Both            | libp2p secure channel |
-| IX      | Mutual     | Full            | None            | Fast mutual auth |
-| IK      | Mutual     | Full            | Initiator       | Low-latency encrypted channels |
-| IKpsk2  | Mutual     | Full            | Initiator       | **WireGuard VPN** |
-
-## Primitives Used
-
-- **Noise Protocol Framework** — handshake pattern composition (Rev 34)
-- **X25519** (Curve25519 Diffie-Hellman) — ephemeral and static key exchange
-- **AES-256-GCM** — authenticated encryption for transport
-- **HKDF-SHA-256** — key derivation via chaining key and handshake hash
-- **SHA-256** — handshake transcript hashing
-
-## Running Locally
-
-```bash
-git clone https://github.com/systemslibrarian/crypto-lab-noise-pipe.git
-cd crypto-lab-noise-pipe
-npm install
-npm run dev
-```
-
-Open `http://localhost:5173/crypto-lab-noise-pipe/` in your browser.
-
-### Build for production
-
-```bash
-npm run build
-```
-
-### Deploy to GitHub Pages
-
-```bash
-npm run deploy
-```
-
-## Security Notes
-
-> **Pattern selection determines security properties — wrong pattern choice is a real-world vulnerability.**
-
-- **NN** provides no authentication: anyone can impersonate either party. Suitable only for anonymous tunneling where identity doesn't matter.
-- **IK** assumes the initiator already knows the responder's static key. If this assumption is violated, the security model breaks down.
-- **IKpsk2** (WireGuard) adds a pre-shared key as a post-quantum defensive layer. Even if X25519 is broken by a quantum computer, the PSK protects the session.
-- **Forward secrecy** comes from ephemeral keys — past sessions stay secure even if long-term keys are compromised.
-- **Identity hiding** depends on the pattern: some patterns leak identity to passive observers, others protect both parties.
-
-This is an educational demonstration. The implementation follows the Noise specification but has not been audited for production use. Do not use this code to protect real data.
-
-Reference: [WireGuard: Next Generation Kernel Network Tunnel](https://www.wireguard.com/papers/wireguard.pdf) — Jason A. Donenfeld, 2017
-
-## Accessibility
-
-This demo meets **WCAG 2.1 AA** requirements:
-
-- All interactive elements have descriptive ARIA labels
-- Full keyboard navigation with logical tab order and no keyboard traps
-- Visible focus indicators in both dark and light modes (minimum 3:1 contrast ratio)
-- Security property indicators use text + icon — never color alone
-- Animations respect `prefers-reduced-motion`
-- All form inputs have associated `<label>` elements
-- Error states announced via `aria-live` regions
-- Minimum 4.5:1 contrast ratio for normal text, 3:1 for large text
-- Tab panel navigation follows WAI-ARIA tabs pattern with arrow key support
-- Screen reader navigable: panels, step walkthroughs, and pattern selector all accessible without a mouse
-
-## Why This Matters
-
-Noise powers real-world security infrastructure:
-
-- **WireGuard** — the modern VPN protocol used by millions, built on Noise IKpsk2
-- **Lightning Network** — Bitcoin's payment channel network uses Noise for encrypted transport
-- **WhatsApp** — transport layer encryption uses a Noise-based protocol
-- **libp2p** — peer-to-peer networking library uses Noise XX for mutual authentication
-
-Noise provides **composable security without TLS complexity**. No cipher suite negotiation, no certificate authorities, no downgrade attacks. Choose a pattern, and the properties are guaranteed by construction.
 
 ## Related Demos
 

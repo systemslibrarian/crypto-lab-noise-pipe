@@ -4,6 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="Interactive demonstration of the Noise Protocol Framework — composable handshake patterns for secure channels" />
+  <script>
+    (function () {
+      const saved = localStorage.getItem('theme');
+      document.documentElement.setAttribute('data-theme', saved ?? 'dark');
+    })();
+  </script>
   <title>Noise Pipe — crypto-lab</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>🔐</text></svg>" />
 </head>
@@ -13,19 +19,19 @@
 
   <!-- Header -->
   <header class="site-header">
+    <button
+      id="theme-toggle"
+      class="theme-toggle"
+      type="button"
+      aria-label="Switch to light mode"
+      style="position: absolute; top: 0; right: 0"
+    >🌙</button>
     <div class="header-top">
       <div class="header-left">
         <span class="category-chip" aria-label="Category: Protocols">Protocols</span>
         <h1 class="site-title">Noise Pipe</h1>
       </div>
       <div class="header-right">
-        <button
-          id="theme-toggle"
-          class="theme-toggle"
-          type="button"
-          aria-label="Switch to light mode"
-          title="Toggle dark/light mode"
-        >🌙</button>
         <a
           href="https://github.com/systemslibrarian/crypto-lab-noise-pipe"
           class="github-badge"

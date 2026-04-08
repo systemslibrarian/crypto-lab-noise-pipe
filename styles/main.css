@@ -146,6 +146,7 @@ a:hover {
 /* ----- Header ----- */
 
 .site-header {
+  position: relative;
   padding: 1.5rem 1rem;
   border-bottom: 1px solid var(--border-color);
   background: var(--bg-secondary);
@@ -208,10 +209,10 @@ a:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  width: 2.6rem;
+  height: 2.6rem;
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: 50%;
   background: var(--bg-tertiary);
   color: var(--text-primary);
   font-size: 1.25rem;
