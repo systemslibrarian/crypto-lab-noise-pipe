@@ -1027,7 +1027,9 @@ main {
   .github-badge,
   .panel-nav,
   .step-navigation,
-  .transport-demo {
+  .transport-demo,
+  .breakit-btn,
+  .copy-btn {
     display: none;
   }
 
@@ -1038,4 +1040,662 @@ main {
   [role="tabpanel"][hidden] {
     display: block !important;
   }
+}
+
+/* ===========================================================================
+   New for 10/10 teaching demo
+   =========================================================================== */
+
+/* ----- Keyboard hint ----- */
+
+.kbd-hint {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  margin-top: 0.5rem;
+}
+
+.kbd-hint kbd {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0.05rem 0.35rem;
+  font-family: 'SF Mono', 'Fira Code', Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+  color: var(--text-primary);
+}
+
+/* ----- Glossary tooltip ----- */
+
+.gl {
+  border-bottom: 1px dotted var(--accent-primary);
+  cursor: help;
+  outline: none;
+}
+
+.gl:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.glossary-tip {
+  position: absolute;
+  z-index: 100;
+  max-width: 22rem;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 0.625rem 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}
+
+/* ----- Pattern Selector: vs TLS ----- */
+
+.vs-tls-section {
+  background: var(--bg-secondary);
+  border-left: 3px solid var(--accent-purple);
+  padding: 0.625rem 0.875rem;
+  border-radius: 4px;
+}
+
+.vs-tls-text {
+  color: var(--text-secondary);
+  font-size: 0.9375rem;
+  margin: 0;
+}
+
+/* ----- Walkthrough header (export button) ----- */
+
+.walkthrough-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.25rem;
+}
+
+.walkthrough-header h2 {
+  margin: 0;
+}
+
+/* ----- Pre-message card ----- */
+
+.premessage-card {
+  background: var(--bg-secondary);
+  border: 1px dashed var(--border-color);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.premessage-card h4 {
+  font-size: 0.9375rem;
+  margin-bottom: 0.5rem;
+  color: var(--accent-purple);
+}
+
+.premessage-help {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+}
+
+.premessage-row {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.25rem 0;
+  font-size: 0.875rem;
+}
+
+.premessage-dir {
+  color: var(--text-secondary);
+  font-weight: 500;
+  min-width: 10rem;
+}
+
+.premessage-tokens code {
+  font-family: 'SF Mono', 'Fira Code', Menlo, Consolas, monospace;
+  background: var(--code-bg);
+  padding: 0.125rem 0.375rem;
+  border-radius: 3px;
+  font-size: 0.8125rem;
+  color: var(--accent-primary);
+}
+
+.premessage-note {
+  margin-top: 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+/* ----- Message diagram ----- */
+
+.message-diagram {
+  margin: 1rem 0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 0.5rem;
+}
+
+.diagram-svg {
+  width: 100%;
+  height: auto;
+  max-height: 130px;
+  color: var(--accent-primary);
+}
+
+.diagram-party {
+  font-size: 12px;
+  fill: var(--text-primary);
+  font-weight: 600;
+}
+
+.diagram-tokens {
+  font-size: 14px;
+  fill: var(--accent-secondary);
+  font-family: 'SF Mono', 'Fira Code', Menlo, Consolas, monospace;
+  font-weight: 600;
+}
+
+.diagram-size {
+  font-size: 10px;
+  fill: var(--text-muted);
+}
+
+.diagram-animate line[marker-end] {
+  stroke-dasharray: 260;
+  stroke-dashoffset: 260;
+  animation: drawArrow 0.6s ease-out forwards;
+}
+
+@keyframes drawArrow {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .diagram-animate line[marker-end] {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+}
+
+/* ----- Predict box ----- */
+
+.predict-box {
+  background: var(--bg-secondary);
+  border: 1px solid var(--accent-purple);
+  border-radius: 6px;
+  padding: 0.625rem 0.875rem;
+  margin: 0.75rem 0;
+}
+
+.predict-box summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9375rem;
+  color: var(--accent-purple);
+  user-select: none;
+}
+
+.predict-box[open] summary {
+  margin-bottom: 0.5rem;
+}
+
+.predict-box p {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+/* ----- Party state cards ----- */
+
+.party-state-grid {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0.75rem 0 1rem;
+}
+
+@media (min-width: 640px) {
+  .party-state-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.party-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 0.75rem 0.875rem;
+}
+
+.party-card[data-role="initiator"] {
+  border-left: 3px solid var(--security-initiator);
+}
+
+.party-card[data-role="responder"] {
+  border-left: 3px solid var(--security-responder);
+}
+
+.party-card h4 {
+  font-size: 0.9375rem;
+  margin-bottom: 0.5rem;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.party-icon {
+  display: inline-block;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+  text-align: center;
+  line-height: 1.5rem;
+  font-size: 0.875rem;
+}
+
+.party-state-body {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.state-row {
+  display: grid;
+  grid-template-columns: 3rem 1fr;
+  gap: 0.5rem;
+  align-items: baseline;
+  padding: 0.25rem 0.375rem;
+  border-radius: 4px;
+  font-size: 0.8125rem;
+  font-family: 'SF Mono', 'Fira Code', Menlo, Consolas, monospace;
+  transition: background 0.3s;
+}
+
+.state-row.state-absent {
+  opacity: 0.45;
+}
+
+.state-row.state-changed {
+  background: rgba(63, 185, 80, 0.12);
+  animation: stateHighlight 1s ease-out;
+}
+
+@keyframes stateHighlight {
+  0% { background: rgba(63, 185, 80, 0.35); }
+  100% { background: rgba(63, 185, 80, 0.12); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .state-row.state-changed {
+    animation: none;
+  }
+}
+
+.state-key {
+  color: var(--accent-primary);
+  font-weight: 600;
+}
+
+.state-val {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.state-h .state-key,
+.state-ck .state-key,
+.state-k .state-key {
+  color: var(--accent-purple);
+}
+
+/* ----- Copy button ----- */
+
+.copy-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 0.8125rem;
+  padding: 0 0.25rem;
+  color: var(--text-muted);
+  border-radius: 3px;
+}
+
+.copy-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+/* ----- Bidirectional transport ----- */
+
+.nonce-pill {
+  margin-top: 0.375rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-family: 'SF Mono', 'Fira Code', Menlo, Consolas, monospace;
+}
+
+.nonce-pill span:last-child {
+  color: var(--accent-primary);
+  font-weight: 600;
+}
+
+.rekey-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.bidirectional-grid {
+  display: grid;
+  gap: 1rem;
+  margin-top: 0.5rem;
+}
+
+@media (min-width: 768px) {
+  .bidirectional-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.lane {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 0.875rem;
+}
+
+.lane h4 {
+  font-size: 0.9375rem;
+  margin-bottom: 0.625rem;
+  color: var(--accent-primary);
+}
+
+.lane-output {
+  margin-top: 0.75rem;
+  display: grid;
+  gap: 0.375rem;
+}
+
+.lane-output label {
+  display: block;
+  font-weight: 500;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+/* ----- Break it panel ----- */
+
+.breakit-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+@media (min-width: 768px) {
+  .breakit-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.breakit-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.breakit-card h4 {
+  font-size: 1rem;
+  margin-bottom: 0.5rem;
+  color: var(--accent-warning);
+}
+
+.breakit-card p {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.75rem;
+}
+
+.breakit-card code {
+  font-family: 'SF Mono', 'Fira Code', Menlo, Consolas, monospace;
+  background: var(--code-bg);
+  padding: 0.05rem 0.3rem;
+  border-radius: 3px;
+  font-size: 0.8125rem;
+}
+
+.breakit-result {
+  margin-top: 0.75rem;
+  font-size: 0.875rem;
+}
+
+.breakit-result:empty {
+  display: none;
+}
+
+.breakit-summary {
+  margin: 0.5rem 0;
+  color: var(--text-primary);
+  font-size: 0.875rem;
+}
+
+.breakit-error {
+  margin: 0.25rem 0 0.5rem;
+  font-family: 'SF Mono', 'Fira Code', Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+  color: var(--accent-danger);
+  background: var(--hex-bg);
+  padding: 0.375rem 0.5rem;
+  border-radius: 4px;
+  border-left: 2px solid var(--accent-danger);
+}
+
+.breakit-details {
+  margin-top: 0.5rem;
+  background: var(--hex-bg);
+  border-radius: 4px;
+  padding: 0.5rem;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.badge-ok {
+  background: rgba(63, 185, 80, 0.15);
+  color: var(--security-full);
+  border: 1px solid var(--security-full);
+}
+
+.badge-fail {
+  background: rgba(248, 81, 73, 0.15);
+  color: var(--security-none);
+  border: 1px solid var(--security-none);
+}
+
+/* ----- Compare picker + explainer ----- */
+
+.compare-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.compare-picker-label {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.compare-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+
+.compare-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 0.375rem 0.625rem;
+  border: 1.5px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  font-family: 'SF Mono', 'Fira Code', Menlo, Consolas, monospace;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.compare-chip:hover {
+  border-color: var(--accent-primary);
+}
+
+.compare-chip.active {
+  background: var(--chip-active-bg);
+  color: var(--chip-active-text);
+  border-color: var(--chip-active-bg);
+}
+
+.compare-cell {
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+}
+
+.compare-cell:hover {
+  border-color: var(--accent-primary);
+  background: var(--bg-tertiary);
+}
+
+.comparison-explainer {
+  margin-top: 1rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--accent-primary);
+  border-radius: 8px;
+  padding: 1rem;
+  animation: fadeSlideIn 0.25s ease-out;
+}
+
+.comparison-explainer h4 {
+  font-size: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.comparison-explainer p {
+  font-size: 0.9375rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin-bottom: 0.5rem;
+}
+
+.explainer-meta {
+  font-size: 0.8125rem !important;
+  color: var(--text-muted) !important;
+  margin-top: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border-color);
+}
+
+/* ----- WireGuard packet diagram ----- */
+
+.packet-title {
+  font-size: 0.9375rem;
+  margin: 0.75rem 0 0.5rem;
+  color: var(--accent-primary);
+}
+
+.packet-diagram {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 4px;
+  background: var(--code-bg);
+}
+
+.packet-block {
+  min-width: 40px;
+  padding: 0.5rem 0.375rem;
+  border-radius: 3px;
+  text-align: center;
+  font-size: 0.7rem;
+  font-family: 'SF Mono', 'Fira Code', Menlo, Consolas, monospace;
+  color: var(--bg-primary);
+  cursor: help;
+  transition: opacity 0.15s;
+}
+
+.packet-block:hover {
+  opacity: 0.85;
+}
+
+.packet-name {
+  font-weight: 600;
+  margin-bottom: 0.125rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.packet-bytes {
+  font-size: 0.65rem;
+  opacity: 0.75;
+}
+
+.wg-meta { background: #8b949e; }
+.wg-e { background: var(--accent-primary); }
+.wg-s { background: var(--accent-purple); color: white; }
+.wg-payload { background: var(--accent-secondary); }
+.wg-mac { background: var(--accent-warning); }
+
+.packet-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin-top: 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+.packet-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.legend-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
 }

@@ -17,6 +17,9 @@
   <!-- Skip link for accessibility -->
   <a href="#main-content" class="skip-link">Skip to main content</a>
 
+  <!-- Glossary tooltip floater (positioned by JS) -->
+  <div id="glossary-tip" class="glossary-tip" role="tooltip" hidden></div>
+
   <!-- Header -->
   <header class="site-header">
     <button
@@ -69,6 +72,9 @@
         Choose a handshake pattern, and the security properties follow. No negotiation, no downgrade attacks,
         no certificate authorities required.
       </p>
+      <p class="kbd-hint">
+        Tip: <kbd>←</kbd>/<kbd>→</kbd> step through handshake messages · <kbd>1</kbd>–<kbd>6</kbd> jump to tabs
+      </p>
     </section>
 
     <!-- Tab Navigation -->
@@ -82,6 +88,9 @@
         </button>
         <button role="tab" aria-selected="false" aria-controls="panel-transport" id="tab-transport" tabindex="-1">
           Transport
+        </button>
+        <button role="tab" aria-selected="false" aria-controls="panel-breakit" id="tab-breakit" tabindex="-1">
+          Break it
         </button>
         <button role="tab" aria-selected="false" aria-controls="panel-comparison" id="tab-comparison" tabindex="-1">
           Compare
@@ -113,6 +122,11 @@
           <div id="security-properties" aria-label="Security properties for selected pattern"></div>
         </div>
 
+        <div class="pattern-section vs-tls-section">
+          <h4>vs TLS</h4>
+          <p id="vs-tls-text" class="vs-tls-text"></p>
+        </div>
+
         <div class="pattern-section">
           <h4>Real-World Use</h4>
           <p id="real-world-use" class="real-world-text"></p>
@@ -127,10 +141,22 @@
 
     <!-- Panel 2: Handshake Walkthrough -->
     <section id="panel-walkthrough" role="tabpanel" aria-labelledby="tab-walkthrough" hidden>
-      <h2>Handshake Walkthrough</h2>
+      <div class="walkthrough-header">
+        <h2>Handshake Walkthrough</h2>
+        <button id="export-transcript-btn" class="btn btn-secondary" type="button" aria-label="Download transcript as JSON">
+          ⬇ Export transcript (JSON)
+        </button>
+      </div>
       <p>Step through each handshake message to see DH operations, key evolution, and hash updates.</p>
 
       <div id="handshake-status" class="status-message" aria-live="polite"></div>
+
+      <!-- Pre-message "Step 0" card (only shown when pattern has preMessages) -->
+      <div id="premessage-card" class="premessage-card" hidden>
+        <h4>Step 0 — Pre-messages (out-of-band)</h4>
+        <p class="premessage-help">These keys are exchanged out-of-band <em>before</em> the handshake. Both sides mix them into <span class="gl" data-term="h">h</span> during Initialize().</p>
+        <div id="premessage-content"></div>
+      </div>
 
       <div class="step-navigation">
         <button id="step-prev" class="btn btn-secondary" aria-label="Previous handshake message" disabled>
@@ -142,69 +168,149 @@
         </button>
       </div>
 
+      <!-- Animated message lane diagram -->
+      <div id="message-diagram" class="message-diagram" aria-label="Message direction diagram"></div>
+
+      <!-- Predict-before-step prompt -->
+      <details id="predict-box" class="predict-box">
+        <summary>🔮 Predict before you step</summary>
+        <p id="predict-text"></p>
+      </details>
+
+      <!-- Per-party state cards -->
+      <div class="party-state-grid" aria-label="Per-party state">
+        <div class="party-card" data-role="initiator">
+          <h4><span class="party-icon">🅰</span> Initiator state</h4>
+          <div id="initiator-state" class="party-state-body"></div>
+        </div>
+        <div class="party-card" data-role="responder">
+          <h4><span class="party-icon">🅱</span> Responder state</h4>
+          <div id="responder-state" class="party-state-body"></div>
+        </div>
+      </div>
+
       <div id="step-info" class="step-info" aria-live="polite"></div>
     </section>
 
     <!-- Panel 3: Transport Phase -->
     <section id="panel-transport" role="tabpanel" aria-labelledby="tab-transport" hidden>
       <h2>Transport Phase</h2>
-      <p>After handshake completion, encrypt and decrypt messages with the derived transport keys.</p>
+      <p>After handshake completion, encrypt and decrypt messages with the derived transport keys. Each direction has an independent nonce counter.</p>
 
       <div class="transport-keys">
         <div class="key-display">
-          <label class="key-label" id="send-key-label">Send Key (initiator → responder)</label>
+          <label class="key-label" id="send-key-label">c₁ — Initiator → Responder</label>
           <div class="hex-value" id="transport-send-key" aria-labelledby="send-key-label"></div>
+          <div class="nonce-pill"><span class="gl" data-term="n">n</span><sub>i→r</sub> = <span id="i-to-r-nonce">0</span></div>
         </div>
         <div class="key-display">
-          <label class="key-label" id="recv-key-label">Receive Key (responder → initiator)</label>
+          <label class="key-label" id="recv-key-label">c₂ — Responder → Initiator</label>
           <div class="hex-value" id="transport-recv-key" aria-labelledby="recv-key-label"></div>
+          <div class="nonce-pill"><span class="gl" data-term="n">n</span><sub>r→i</sub> = <span id="r-to-i-nonce">0</span></div>
         </div>
       </div>
 
-      <div class="nonce-display">
-        <span>Nonce counter:</span>
-        <span id="transport-nonce" class="nonce-value" aria-live="polite">0</span>
-        <span class="nonce-note">(exhaustion at 2<sup>64</sup> — rekey required)</span>
+      <div class="rekey-row">
+        <button id="rekey-i-btn" class="btn btn-secondary" type="button" aria-label="Rekey initiator send cipher">↻ Rekey c₁</button>
+        <button id="rekey-r-btn" class="btn btn-secondary" type="button" aria-label="Rekey responder send cipher">↻ Rekey c₂</button>
+        <button id="reset-transport-btn" class="btn btn-secondary" type="button" aria-label="Reset transport ciphers">⟲ Reset</button>
       </div>
 
-      <div class="transport-demo">
-        <div class="input-group">
-          <label for="transport-message">Message to encrypt</label>
-          <input
-            type="text"
-            id="transport-message"
-            class="text-input"
-            placeholder="Type a message…"
-            autocomplete="off"
-          />
+      <div class="bidirectional-grid">
+        <!-- Initiator → Responder lane -->
+        <div class="lane">
+          <h4>🅰 → 🅱 (initiator sends)</h4>
+          <div class="input-group">
+            <label for="msg-i-to-r">Plaintext</label>
+            <input type="text" id="msg-i-to-r" class="text-input" placeholder="Type a message…" autocomplete="off" />
+          </div>
+          <button id="send-i-to-r" class="btn btn-primary" type="button">Encrypt &amp; Send</button>
+          <div class="lane-output">
+            <label>Ciphertext (hex)</label>
+            <div class="hex-output" id="ct-i-to-r"></div>
+            <label>Decrypted by 🅱</label>
+            <div class="plaintext-output" id="pt-i-to-r"></div>
+          </div>
         </div>
-        <button id="encrypt-btn" class="btn btn-primary" aria-label="Encrypt message with transport key">
-          Encrypt &amp; Send
-        </button>
 
-        <div id="transport-error" class="error-message" aria-live="assertive"></div>
+        <!-- Responder → Initiator lane -->
+        <div class="lane">
+          <h4>🅱 → 🅰 (responder sends)</h4>
+          <div class="input-group">
+            <label for="msg-r-to-i">Plaintext</label>
+            <input type="text" id="msg-r-to-i" class="text-input" placeholder="Type a message…" autocomplete="off" />
+          </div>
+          <button id="send-r-to-i" class="btn btn-primary" type="button">Encrypt &amp; Send</button>
+          <div class="lane-output">
+            <label>Ciphertext (hex)</label>
+            <div class="hex-output" id="ct-r-to-i"></div>
+            <label>Decrypted by 🅰</label>
+            <div class="plaintext-output" id="pt-r-to-i"></div>
+          </div>
+        </div>
+      </div>
 
-        <div class="transport-output">
-          <div class="output-group">
-            <label id="ct-label">Ciphertext (hex)</label>
-            <div class="hex-output" id="transport-ciphertext" aria-labelledby="ct-label"></div>
-          </div>
-          <div class="output-group">
-            <label id="pt-label">Decrypted plaintext</label>
-            <div class="plaintext-output" id="transport-plaintext" aria-labelledby="pt-label"></div>
-          </div>
+      <div id="transport-error" class="error-message" aria-live="assertive"></div>
+    </section>
+
+    <!-- Panel 4: Break it -->
+    <section id="panel-breakit" role="tabpanel" aria-labelledby="tab-breakit" hidden>
+      <h2>Break it</h2>
+      <p>Run real attacks against the live handshake state. Each card runs an independent simulation against the currently selected pattern.</p>
+
+      <div class="breakit-grid">
+        <div class="breakit-card">
+          <h4>1. Flip a ciphertext bit</h4>
+          <p>Encrypt a transport message, flip one bit in the ciphertext, decrypt. Tests the AEAD authentication tag.</p>
+          <button class="btn btn-primary breakit-btn" data-attack="bitflip">Run attack</button>
+          <div class="breakit-result" data-result="bitflip"></div>
+        </div>
+
+        <div class="breakit-card">
+          <h4>2. Swap responder's static key (MitM)</h4>
+          <p>Substitute an attacker's key for the responder's <span class="gl" data-term="rs">rs</span>. <code>IK</code>/<code>NK</code> trust the pre-known key blindly; <code>XX</code> verifies it during the handshake.</p>
+          <button class="btn btn-primary breakit-btn" data-attack="rsswap">Run attack</button>
+          <div class="breakit-result" data-result="rsswap"></div>
+        </div>
+
+        <div class="breakit-card">
+          <h4>3. Reuse a transport nonce</h4>
+          <p>Force two encryptions at the same <span class="gl" data-term="n">n</span> with the same key. AES-GCM is a CTR-mode stream cipher under the hood — reuse leaks the XOR of the two plaintexts.</p>
+          <button class="btn btn-primary breakit-btn" data-attack="noncereuse">Run attack</button>
+          <div class="breakit-result" data-result="noncereuse"></div>
+        </div>
+
+        <div class="breakit-card">
+          <h4>4. PSK mismatch (IKpsk2 only)</h4>
+          <p>Initiator and responder hold <em>different</em> pre-shared keys. The chaining keys diverge after the <span class="gl" data-term="psk">psk</span> mix.</p>
+          <button class="btn btn-primary breakit-btn" data-attack="pskmismatch">Run attack</button>
+          <div class="breakit-result" data-result="pskmismatch"></div>
+        </div>
+
+        <div class="breakit-card">
+          <h4>5. Replay message 1</h4>
+          <p>Capture the initiator's first message and deliver it to a fresh responder. Noise core has no replay protection — WireGuard adds a TAI64N timestamp.</p>
+          <button class="btn btn-primary breakit-btn" data-attack="replay">Run attack</button>
+          <div class="breakit-result" data-result="replay"></div>
         </div>
       </div>
     </section>
 
-    <!-- Panel 4: Pattern Comparison -->
+    <!-- Panel 5: Pattern Comparison -->
     <section id="panel-comparison" role="tabpanel" aria-labelledby="tab-comparison" hidden>
       <h2>Pattern Comparison</h2>
-      <p>Side-by-side comparison of key Noise patterns and their security properties.</p>
+      <p>Pick patterns to compare side-by-side. Click any property cell to see why it differs.</p>
+
+      <div class="compare-picker">
+        <span class="compare-picker-label">Patterns to compare:</span>
+        <div id="compare-chip-row" class="compare-chip-row" role="group" aria-label="Choose patterns to compare"></div>
+      </div>
+
       <div id="comparison-table" class="comparison-container"></div>
+      <div id="comparison-explainer" class="comparison-explainer" hidden></div>
     </section>
 
-    <!-- Panel 5: WireGuard Deep Dive -->
+    <!-- Panel 6: WireGuard Deep Dive -->
     <section id="panel-wireguard" role="tabpanel" aria-labelledby="tab-wireguard" hidden>
       <h2>WireGuard Deep Dive</h2>
       <div id="wireguard-content"></div>

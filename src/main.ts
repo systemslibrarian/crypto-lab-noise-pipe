@@ -26,7 +26,7 @@ function setupThemeToggle(): void {
 
 document.addEventListener('DOMContentLoaded', () => {
   setupThemeToggle();
+  renderWireGuardPanel();
   initUI();
   renderPatternComparison();
-  renderWireGuardPanel();
 });

@@ -294,9 +294,15 @@ export class HandshakeState {
           if (isSender) {
             if (!this.e) throw new Error('Pre-message requires local ephemeral key');
             await this.symmetricState.mixHash(this.e.publicKey);
+            if (this.psk !== null) {
+              await this.symmetricState.mixKey(this.e.publicKey);
+            }
           } else {
             if (!this.re) throw new Error('Pre-message requires remote ephemeral key');
             await this.symmetricState.mixHash(this.re);
+            if (this.psk !== null) {
+              await this.symmetricState.mixKey(this.re);
+            }
           }
         } else if (token === 's') {
           if (isSender) {
@@ -339,6 +345,36 @@ export class HandshakeState {
   /** Get remote ephemeral public key */
   getRemoteEphemeral(): Uint8Array | null {
     return this.re ? new Uint8Array(this.re) : null;
+  }
+
+  /** Get local static public key (or null) */
+  getLocalStatic(): Uint8Array | null {
+    return this.s?.publicKey ? new Uint8Array(this.s.publicKey) : null;
+  }
+
+  /** Get remote static public key (or null) */
+  getRemoteStatic(): Uint8Array | null {
+    return this.rs ? new Uint8Array(this.rs) : null;
+  }
+
+  /** Get PSK (or null) */
+  getPSK(): Uint8Array | null {
+    return this.psk ? new Uint8Array(this.psk) : null;
+  }
+
+  /** Snapshot of the current handshake-state variables for UI rendering. */
+  snapshot(): PartyStateSnapshot {
+    return {
+      role: this.role,
+      s: this.getLocalStatic(),
+      e: this.getLocalEphemeral(),
+      rs: this.getRemoteStatic(),
+      re: this.getRemoteEphemeral(),
+      psk: this.getPSK(),
+      h: this.getHandshakeHash(),
+      ck: this.getChainingKey(),
+      hasCipherKey: this.symmetricState.cipher.hasKey()
+    };
   }
 
   /** Check if handshake is complete */
@@ -626,9 +662,36 @@ export class HandshakeState {
  * Run a full handshake between two parties.
  * Returns step-by-step logs, transport cipher states, and the handshake hash.
  */
+/** Snapshot of one party's handshake state for UI rendering. */
+export interface PartyStateSnapshot {
+  role: Role;
+  s: Uint8Array | null;   // local static public key
+  e: Uint8Array | null;   // local ephemeral public key
+  rs: Uint8Array | null;  // remote static public key
+  re: Uint8Array | null;  // remote ephemeral public key
+  psk: Uint8Array | null;
+  h: Uint8Array;
+  ck: Uint8Array;
+  hasCipherKey: boolean;
+}
+
+export interface MessageLog {
+  direction: string;
+  tokens: Token[];
+  logs: StepLog[];
+  /** State of each party AFTER this message is fully processed. */
+  initiatorStateAfter: PartyStateSnapshot;
+  responderStateAfter: PartyStateSnapshot;
+  /** Wire bytes for this message (what the sender actually emits). */
+  wireBytes: Uint8Array;
+}
+
 export interface FullHandshakeResult {
   /** Logs per message (alternating initiator/responder) */
-  messageLogs: { direction: string; tokens: Token[]; logs: StepLog[] }[];
+  messageLogs: MessageLog[];
+  /** Initial party states BEFORE message 1 (after any pre-messages are processed). */
+  initiatorInitialState: PartyStateSnapshot;
+  responderInitialState: PartyStateSnapshot;
   /** Initiator's transport cipher states [send, recv] */
   initiatorCiphers: [CipherState, CipherState];
   /** Responder's transport cipher states [send, recv] */
@@ -681,7 +744,10 @@ export async function runFullHandshake(
   const responder = new HandshakeState();
   await responder.initialize(pattern, false, EMPTY, rStatic, null, responderKnowsRS, null, psk);
 
-  const messageLogs: FullHandshakeResult['messageLogs'] = [];
+  const initiatorInitialState = initiator.snapshot();
+  const responderInitialState = responder.snapshot();
+
+  const messageLogs: MessageLog[] = [];
   let iCiphers: [CipherState, CipherState] | null = null;
   let rCiphers: [CipherState, CipherState] | null = null;
 
@@ -695,7 +761,10 @@ export async function runFullHandshake(
       messageLogs.push({
         direction: mp.direction,
         tokens: mp.tokens,
-        logs: [...writeResult.stepLogs, ...readResult.stepLogs]
+        logs: [...writeResult.stepLogs, ...readResult.stepLogs],
+        initiatorStateAfter: initiator.snapshot(),
+        responderStateAfter: responder.snapshot(),
+        wireBytes: writeResult.messageBuffer!
       });
       if (writeResult.done) iCiphers = writeResult.cipherStates!;
       if (readResult.done) rCiphers = readResult.cipherStates!;
@@ -705,7 +774,10 @@ export async function runFullHandshake(
       messageLogs.push({
         direction: mp.direction,
         tokens: mp.tokens,
-        logs: [...writeResult.stepLogs, ...readResult.stepLogs]
+        logs: [...writeResult.stepLogs, ...readResult.stepLogs],
+        initiatorStateAfter: initiator.snapshot(),
+        responderStateAfter: responder.snapshot(),
+        wireBytes: writeResult.messageBuffer!
       });
       if (writeResult.done) rCiphers = writeResult.cipherStates!;
       if (readResult.done) iCiphers = readResult.cipherStates!;
@@ -714,6 +786,8 @@ export async function runFullHandshake(
 
   return {
     messageLogs,
+    initiatorInitialState,
+    responderInitialState,
     initiatorCiphers: iCiphers!,
     responderCiphers: rCiphers!,
     handshakeHash: initiator.getHandshakeHash(),
@@ -723,6 +797,289 @@ export async function runFullHandshake(
       psk
     }
   };
+}
+
+/* ----- Failure-mode simulations for the "Break it" panel ----- */
+
+export interface FailureResult {
+  /** Did the operation succeed? */
+  ok: boolean;
+  /** Free-form summary line shown to the user. */
+  summary: string;
+  /** Hex of any relevant ciphertext / plaintext / key produced. */
+  details?: Record<string, string>;
+  /** Caught exception message, if any. */
+  error?: string;
+}
+
+/**
+ * Encrypt a plaintext, flip one bit in the ciphertext, then attempt decryption.
+ * Demonstrates that AES-GCM detects any single-bit tamper via the auth tag.
+ */
+export async function simulateBitFlip(
+  sendCipher: CipherState,
+  recvCipher: CipherState,
+  plaintext: string
+): Promise<FailureResult> {
+  try {
+    const pt = new TextEncoder().encode(plaintext);
+    const ct = await sendCipher.encryptWithAd(EMPTY, pt);
+    // Flip the most significant bit of the first ciphertext byte
+    const tampered = new Uint8Array(ct);
+    tampered[0] ^= 0x80;
+    try {
+      await recvCipher.decryptWithAd(EMPTY, tampered);
+      return {
+        ok: false,
+        summary: 'Bit-flip went undetected (this should never happen with a correctly implemented AEAD)',
+        details: { ciphertext: toHex(ct), tampered: toHex(tampered) }
+      };
+    } catch (err) {
+      return {
+        ok: true,
+        summary: 'AEAD authentication tag detected the tamper — decryption rejected.',
+        details: { ciphertext: toHex(ct), tampered: toHex(tampered) },
+        error: (err as Error).message
+      };
+    }
+  } catch (err) {
+    return { ok: false, summary: 'Setup error', error: (err as Error).message };
+  }
+}
+
+/**
+ * Reuse the same nonce twice with the same key. AES-GCM requires unique
+ * (key, nonce) pairs — reuse breaks confidentiality and authentication.
+ */
+export async function simulateNonceReuse(
+  send: CipherState,
+  recv: CipherState
+): Promise<FailureResult> {
+  try {
+    // First encryption at nonce n
+    const startN = send.n;
+    const ct1 = await send.encryptWithAd(EMPTY, new TextEncoder().encode('Hello'));
+    // Forcibly reset nonce and encrypt a different plaintext at the same n
+    send.setNonce(startN);
+    const ct2 = await send.encryptWithAd(EMPTY, new TextEncoder().encode('WORLD'));
+    // Both ciphertexts are now valid under the SAME (key, nonce).
+    // XOR of the two ciphertext bodies equals XOR of the two plaintexts (GCM is CTR mode under the hood).
+    // The auth tags differ — but a passive attacker who saw both can XOR them to recover plaintext relationships.
+    const minLen = Math.min(ct1.length - 16, ct2.length - 16);
+    const xor = new Uint8Array(minLen);
+    for (let i = 0; i < minLen; i++) xor[i] = ct1[i] ^ ct2[i];
+    // Also verify recv can decrypt both (it won't — recv's n advanced past startN).
+    recv.setNonce(startN);
+    const pt1 = await recv.decryptWithAd(EMPTY, ct1);
+    recv.setNonce(startN);
+    const pt2 = await recv.decryptWithAd(EMPTY, ct2);
+    return {
+      ok: false, // "ok" here means "no failure observed" — but the leak IS the failure
+      summary: 'Both decrypted — but XOR of ciphertexts leaks XOR of plaintexts. GCM\'s confidentiality is destroyed.',
+      details: {
+        ciphertext1: toHex(ct1),
+        ciphertext2: toHex(ct2),
+        ciphertextXOR: toHex(xor),
+        recoveredXOR: toHex(new Uint8Array([...pt1].map((b, i) => b ^ pt2[i])).slice(0, minLen))
+      }
+    };
+  } catch (err) {
+    return { ok: true, summary: 'Encryption refused nonce reuse', error: (err as Error).message };
+  }
+}
+
+/**
+ * Run a handshake where the initiator believes a forged static key is the
+ * responder's. For IK/NK the handshake succeeds (mutual auth was never
+ * established by anything other than the wrong key) — the responder is
+ * impersonated. For XX the handshake fails when the responder's real
+ * `s` token cannot be decrypted under the bogus DH-derived key.
+ */
+export async function simulateRSSwap(
+  pattern: HandshakePattern
+): Promise<FailureResult> {
+  try {
+    // Patterns without a "<- s" pre-message learn rs during the handshake itself;
+    // there's nothing to swap out-of-band.
+    const hasPreKnownRS = pattern.preMessages.some(
+      pm => pm.direction === '<-' && pm.tokens.includes('s')
+    );
+    if (!hasPreKnownRS) {
+      return {
+        ok: false,
+        summary: `${pattern.name} has no pre-known responder static key — there's nothing to forge out-of-band. Try IK, NK, KK, or XK.`
+      };
+    }
+
+    const realResponder = generateKeyPair();
+    const attacker = generateKeyPair();
+
+    const needsI = hasStaticKeyRequirement(pattern, true);
+    const iStatic = needsI ? generateKeyPair() : null;
+    const psk = pattern.name.includes('psk') ? crypto.getRandomValues(new Uint8Array(32)) : null;
+
+    const initiator = new HandshakeState();
+    const responder = new HandshakeState();
+    let iKnowsRS: Uint8Array | null = attacker.publicKey; // <- SWAPPED
+    let rKnowsRS: Uint8Array | null = null;
+    for (const pm of pattern.preMessages) {
+      if (pm.direction === '->' && pm.tokens.includes('s') && iStatic) rKnowsRS = iStatic.publicKey;
+    }
+    await initiator.initialize(pattern, true, EMPTY, iStatic, null, iKnowsRS, null, psk);
+    await responder.initialize(pattern, false, EMPTY, realResponder, null, rKnowsRS, null, psk);
+
+    try {
+      for (let i = 0; i < pattern.messages.length; i++) {
+        const mp = pattern.messages[i];
+        if (mp.direction === '->') {
+          const w = await initiator.writeMessage(EMPTY);
+          await responder.readMessage(w.messageBuffer!);
+        } else {
+          const w = await responder.writeMessage(EMPTY);
+          await initiator.readMessage(w.messageBuffer!);
+        }
+      }
+      return {
+        ok: false,
+        summary: `${pattern.name} accepted the forged responder static key — the handshake completed against an impersonator.`,
+        details: {
+          realResponderRS: toHex(realResponder.publicKey),
+          forgedRS: toHex(attacker.publicKey)
+        }
+      };
+    } catch (err) {
+      return {
+        ok: true,
+        summary: `${pattern.name} rejected the forged responder static key — the DH chain didn't match and a later decryption failed.`,
+        details: {
+          realResponderRS: toHex(realResponder.publicKey),
+          forgedRS: toHex(attacker.publicKey)
+        },
+        error: (err as Error).message
+      };
+    }
+  } catch (err) {
+    return { ok: false, summary: 'Setup error', error: (err as Error).message };
+  }
+}
+
+/**
+ * Run a handshake where initiator and responder hold *different* PSKs.
+ * The handshakes will produce divergent ck/k values, so transport encryption
+ * encrypted by one side cannot be decrypted by the other.
+ */
+export async function simulatePSKMismatch(
+  pattern: HandshakePattern
+): Promise<FailureResult> {
+  try {
+    if (!pattern.name.includes('psk')) {
+      return { ok: false, summary: `${pattern.name} has no PSK to mismatch — try IKpsk2.` };
+    }
+
+    const iStatic = generateKeyPair();
+    const rStatic = generateKeyPair();
+    const pskI = crypto.getRandomValues(new Uint8Array(32));
+    const pskR = crypto.getRandomValues(new Uint8Array(32));
+
+    const initiator = new HandshakeState();
+    const responder = new HandshakeState();
+
+    let iKnowsRS: Uint8Array | null = null;
+    let rKnowsRS: Uint8Array | null = null;
+    for (const pm of pattern.preMessages) {
+      if (pm.direction === '<-' && pm.tokens.includes('s')) iKnowsRS = rStatic.publicKey;
+      if (pm.direction === '->' && pm.tokens.includes('s')) rKnowsRS = iStatic.publicKey;
+    }
+    await initiator.initialize(pattern, true, EMPTY, iStatic, null, iKnowsRS, null, pskI);
+    await responder.initialize(pattern, false, EMPTY, rStatic, null, rKnowsRS, null, pskR);
+
+    try {
+      for (let i = 0; i < pattern.messages.length; i++) {
+        const mp = pattern.messages[i];
+        if (mp.direction === '->') {
+          const w = await initiator.writeMessage(EMPTY);
+          await responder.readMessage(w.messageBuffer!);
+        } else {
+          const w = await responder.writeMessage(EMPTY);
+          await initiator.readMessage(w.messageBuffer!);
+        }
+      }
+      return {
+        ok: false,
+        summary: 'Handshake completed despite mismatched PSKs — but transport keys will diverge.',
+        details: {
+          pskInitiator: toHex(pskI),
+          pskResponder: toHex(pskR)
+        }
+      };
+    } catch (err) {
+      return {
+        ok: true,
+        summary: 'PSK mismatch caused the handshake to fail — a payload couldn\'t be decrypted under the diverged cipher key.',
+        details: {
+          pskInitiator: toHex(pskI),
+          pskResponder: toHex(pskR)
+        },
+        error: (err as Error).message
+      };
+    }
+  } catch (err) {
+    return { ok: false, summary: 'Setup error', error: (err as Error).message };
+  }
+}
+
+/**
+ * Capture message 1, then deliver it to a *fresh* responder. Without an
+ * application-layer timestamp/nonce (as WireGuard adds), the responder
+ * cannot tell this is a replay and will happily begin a new handshake.
+ */
+export async function simulateReplay(
+  pattern: HandshakePattern
+): Promise<FailureResult> {
+  try {
+    if (pattern.messages.length === 0 || pattern.messages[0].direction !== '->') {
+      return { ok: false, summary: 'This pattern\'s first message is not initiator-sent — cannot demo replay.' };
+    }
+
+    const needsI = hasStaticKeyRequirement(pattern, true);
+    const needsR = hasStaticKeyRequirement(pattern, false);
+    const iStatic = needsI ? generateKeyPair() : null;
+    const rStatic = needsR ? generateKeyPair() : null;
+    const psk = pattern.name.includes('psk') ? crypto.getRandomValues(new Uint8Array(32)) : null;
+
+    let iKnowsRS: Uint8Array | null = null;
+    let rKnowsRS: Uint8Array | null = null;
+    for (const pm of pattern.preMessages) {
+      if (pm.direction === '<-' && pm.tokens.includes('s') && rStatic) iKnowsRS = rStatic.publicKey;
+      if (pm.direction === '->' && pm.tokens.includes('s') && iStatic) rKnowsRS = iStatic.publicKey;
+    }
+
+    // Original handshake — capture message 1
+    const initiator = new HandshakeState();
+    await initiator.initialize(pattern, true, EMPTY, iStatic, null, iKnowsRS, null, psk);
+    const w1 = await initiator.writeMessage(EMPTY);
+    const msg1 = w1.messageBuffer!;
+
+    // Fresh responder — receives a replayed copy of msg1
+    const responder = new HandshakeState();
+    await responder.initialize(pattern, false, EMPTY, rStatic, null, rKnowsRS, null, psk);
+    try {
+      await responder.readMessage(msg1);
+      return {
+        ok: false,
+        summary: `${pattern.name} has no built-in replay protection — the fresh responder accepted the replayed message 1. WireGuard adds a TAI64N timestamp inside its encrypted payload to detect this.`,
+        details: { replayedBytes: toHex(msg1).slice(0, 64) + '…' }
+      };
+    } catch (err) {
+      return {
+        ok: true,
+        summary: 'Replay rejected (unexpected — Noise core has no replay protection).',
+        error: (err as Error).message
+      };
+    }
+  } catch (err) {
+    return { ok: false, summary: 'Setup error', error: (err as Error).message };
+  }
 }
 
 function hasStaticKeyRequirement(pattern: HandshakePattern, isInitiator: boolean): boolean {
