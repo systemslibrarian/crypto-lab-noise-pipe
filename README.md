@@ -13,10 +13,11 @@ The **Noise Protocol Framework** is a framework for constructing cryptographic h
 - **You are building a peer-to-peer or embedded transport** — Noise is designed for application-layer use where PKI infrastructure is absent or impractical, such as VPN tunnels, IoT devices, or payment-channel networks.
 - **You require proven forward secrecy** — every Noise pattern uses ephemeral X25519 key pairs per session, so past sessions remain secure even if long-term static keys are later compromised.
 - **Do not use Noise** when you need interoperability with existing TLS-based infrastructure (web servers, browsers, HTTPS APIs) — Noise is not TLS and does not speak the TLS record protocol.
+- **Do NOT treat this as production code** — it is a teaching demo for stepping through handshake patterns, not a hardened Noise implementation.
 
 ## Live Demo
 
-**[Live Demo →](https://systemslibrarian.github.io/crypto-lab-noise-pipe/)**
+**[systemslibrarian.github.io/crypto-lab-noise-pipe](https://systemslibrarian.github.io/crypto-lab-noise-pipe/)**
 
 Select one of twelve handshake patterns (NN, NK, NX, KN, KK, KX, XN, XK, XX, IX, IK, IKpsk2) to view its complete message sequence and security properties. Step through each handshake message one at a time, observing real X25519 DH scalar multiplications, chaining key evolution via HKDF-SHA-256, and running handshake hash updates. After handshake completion, encrypt and decrypt plaintext messages using the derived AES-256-GCM transport keys with live nonce tracking; a Pattern Comparison panel shows NN, XX, IK, and IKpsk2 side-by-side, and a WireGuard Deep Dive panel maps IKpsk2 token-by-token to WireGuard's actual Initiator and Responder messages.
 
@@ -35,16 +36,25 @@ Select one of twelve handshake patterns (NN, NK, NX, KN, KK, KX, XN, XK, XX, IX,
 - **WhatsApp** — the transport layer between WhatsApp clients and servers uses a Noise-based protocol, providing forward secrecy and mutual authentication independently of the Signal end-to-end encryption layer.
 - **libp2p** — the peer-to-peer networking library used by IPFS and Ethereum clients implements Noise XX as its default secure channel protocol (libp2p Noise spec), providing mutual authentication and identity hiding for both peers.
 
----
+## How to Run Locally
+
+```bash
+git clone https://github.com/systemslibrarian/crypto-lab-noise-pipe
+cd crypto-lab-noise-pipe
+npm install
+npm run dev
+```
 
 ## Related Demos
 
-- [crypto-lab-ratchet-wire](https://github.com/systemslibrarian/crypto-lab-ratchet-wire) — Double Ratchet algorithm (Signal Protocol)
-- [crypto-lab-x3dh-wire](https://github.com/systemslibrarian/crypto-lab-x3dh-wire) — X3DH key agreement protocol
-- [crypto-lab-hybrid-wire](https://github.com/systemslibrarian/crypto-lab-hybrid-wire) — Hybrid post-quantum key exchange
-- [crypto-compare](https://github.com/systemslibrarian/crypto-compare) — Comparative cryptography reference
-- [crypto-lab](https://github.com/systemslibrarian/crypto-lab) — Full crypto-lab collection
+- [crypto-lab-ratchet-wire](https://systemslibrarian.github.io/crypto-lab-ratchet-wire/) — Double Ratchet algorithm (Signal Protocol).
+- [crypto-lab-x3dh-wire](https://systemslibrarian.github.io/crypto-lab-x3dh-wire/) — X3DH asynchronous key agreement protocol.
+- [crypto-lab-hybrid-wire](https://systemslibrarian.github.io/crypto-lab-hybrid-wire/) — hybrid X25519 + ML-KEM-768 key exchange.
+- [crypto-lab-mls-group](https://systemslibrarian.github.io/crypto-lab-mls-group/) — MLS/TreeKEM for scalable encrypted group messaging.
+- [crypto-lab-ssh-handshake](https://systemslibrarian.github.io/crypto-lab-ssh-handshake/) — the SSH transport handshake and TOFU trust model.
 
 ---
+
+*One of 60+ browser demos in the [Crypto Lab](https://crypto-lab.systemslibrarian.dev/) suite.*
 
 *"So whether you eat or drink or whatever you do, do it all for the glory of God." — 1 Corinthians 10:31*
