@@ -8,12 +8,15 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "deploy": "vite build && gh-pages -d dist"
+    "deploy": "vite build && gh-pages -d dist",
+    "test:a11y": "playwright test"
   },
   "dependencies": {
     "@noble/curves": "^1.8.1"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
+    "@playwright/test": "^1.61.1",
     "gh-pages": "^6.3.0",
     "typescript": "^5.7.3",
     "vite": "^6.1.0"

@@ -6,6 +6,7 @@
 /* ----- CSS Custom Properties ----- */
 
 :root {
+  color-scheme: dark;
   /* Dark mode (default) */
   --bg-primary: #0d1117;
   --bg-secondary: #161b22;
@@ -41,6 +42,7 @@
 }
 
 [data-theme="light"] {
+  color-scheme: light;
   --bg-primary: #ffffff;
   --bg-secondary: #f6f8fa;
   --bg-tertiary: #eaeef2;
@@ -86,6 +88,9 @@ html {
   font-size: 16px;
   -webkit-text-size-adjust: 100%;
   scroll-behavior: smooth;
+  /* Own background so the canvas is painted by <html> (WebKit promotes body's
+     background otherwise, which axe then reads as transparent → false flags). */
+  background-color: var(--bg-primary);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1717,7 +1722,7 @@ main {
 [data-theme="dark"] .kbd-hint,
 [data-theme="dark"] .premessage-help,
 [data-theme="dark"] .premessage-note,
-[data-theme="dark"] .explainer-meta { color: #777e89; } /* was #6e7681, now ≥4.6:1 on theme surfaces */
+[data-theme="dark"] .explainer-meta { color: #8b929c; } /* was #6e7681→#777e89 (3.95 on #1c2128); now 5.16:1 on darkest surface */
 [data-theme="light"] .spec-ref,
 [data-theme="light"] .status-message,
 [data-theme="light"] .detail-key,
@@ -1727,3 +1732,23 @@ main {
 [data-theme="light"] .premessage-help,
 [data-theme="light"] .premessage-note,
 [data-theme="light"] .explainer-meta { color: #6c737b; } /* was #8b949e, now ≥4.6:1 on theme surfaces */
+
+
+/* ═══ Accessibility: WCAG AA contrast overrides (axe gate, 2026-07) ═══ */
+
+/* Nonce subscript used --text-muted, which sinks below AA on card surfaces. */
+[data-theme="dark"] .nonce-pill sub { color: #8b929c; } /* was #6e7681 = 3.76 on #161b22 → 5.51:1 */
+[data-theme="light"] .nonce-pill sub { color: #6a727c; } /* was #8b949e = 2.88 on #f6f8fa → 4.58:1 */
+
+/* WireGuard packet chips: text failed 4.5:1 on the accent fills. .wg-meta is a
+   fixed light grey in both themes, so dark ink works there. .wg-s uses the theme
+   purple, which is light in dark-mode (needs dark ink) but dark in light-mode
+   (needs white ink) — so ink it per theme. */
+.wg-meta.packet-block { color: #0d1117; } /* white 3.07 → dark ink 6.15:1 on #8b949e */
+[data-theme="dark"] .wg-s.packet-block { color: #0d1117; } /* white 2.51 → dark ink 7.51:1 on #bc8cff */
+[data-theme="light"] .wg-s.packet-block { color: #ffffff; } /* white 5.05:1 on #8250df (light-theme purple) */
+
+/* Light-theme "changed" state rows: the green highlight tint darkened the row
+   background just enough to drop the muted value text and the glossary link
+   under AA. Lighten the tint in light mode so both clear 4.5:1. */
+[data-theme="light"] .state-row.state-changed { background-color: rgba(63, 185, 80, 0.08); } /* state-val 4.44→4.60, .gl 4.39→4.56 */
