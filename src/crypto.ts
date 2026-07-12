@@ -80,16 +80,22 @@ export async function sha256(data: Uint8Array): Promise<Uint8Array> {
 
 const NONCE_LEN = 12; // 96-bit nonce for AES-GCM
 
-/** Build a 12-byte nonce from a 64-bit counter (little-endian), padded with 4 zero bytes. */
+/**
+ * Build the 12-byte AES-GCM nonce for Noise counter `n`.
+ *
+ * Noise spec Section 12.3 (AESGCM): "The 96-bit nonce is formed by encoding
+ * 32 bits of zeros followed by big-endian encoding of n." (ChaChaPoly, by
+ * contrast, uses little-endian — this is a cipher-specific detail.) So the
+ * layout is: 4 zero bytes || 8-byte big-endian counter. Encoding `n` little-
+ * endian instead only diverges from the standard once n >= 1, which is exactly
+ * when known-answer vectors start to disagree.
+ */
 export function nonceFromCounter(n: number): Uint8Array {
   const nonce = new Uint8Array(NONCE_LEN);
-  // Noise spec: 32-bit zeros then 64-bit LE counter
-  // Per spec Section 5.1: nonce is 8 bytes LE, padded to cipher's nonce size
-  // For AESGCM: 4 bytes zeros || 8 bytes LE counter
   const view = new DataView(nonce.buffer);
-  view.setUint32(4, n & 0xFFFFFFFF, true);
-  // For n > 2^32, set upper 32 bits
-  view.setUint32(8, Math.floor(n / 0x100000000) & 0xFFFFFFFF, true);
+  // Big-endian 64-bit counter in bytes 4..11 (bytes 0..3 stay zero).
+  view.setUint32(4, Math.floor(n / 0x100000000) & 0xFFFFFFFF, false); // high 32 bits
+  view.setUint32(8, n & 0xFFFFFFFF, false); // low 32 bits
   return nonce;
 }
 

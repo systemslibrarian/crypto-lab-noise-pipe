@@ -4,7 +4,7 @@
 
 ## What It Is
 
-The **Noise Protocol Framework** is a framework for constructing cryptographic handshake protocols from composable patterns. Instead of negotiating cipher suites like TLS, you choose a **handshake pattern** — a fixed sequence of **X25519** (Curve25519 ECDH) Diffie-Hellman operations — and the security properties follow deterministically from the pattern definition. Key material is derived throughout the handshake using **HKDF-SHA-256** applied to a chaining key and running handshake hash; once the handshake completes, both parties hold symmetric **AES-256-GCM** transport keys with independent send and receive nonce counters. The security model is asymmetric during the handshake (static and ephemeral Diffie-Hellman key pairs) and symmetric during transport (128-bit-keyed AEAD encryption). The optional PSK mode used in IKpsk2 adds a pre-shared symmetric secret as a post-quantum defensive hedge without changing the handshake round-trips.
+The **Noise Protocol Framework** is a framework for constructing cryptographic handshake protocols from composable patterns. Instead of negotiating cipher suites like TLS, you choose a **handshake pattern** — a fixed sequence of **X25519** (Curve25519 ECDH) Diffie-Hellman operations — and the security properties follow deterministically from the pattern definition. Key material is derived throughout the handshake using **HKDF-SHA-256** applied to a chaining key and running handshake hash; once the handshake completes, both parties hold symmetric **AES-256-GCM** transport keys with independent send and receive nonce counters. The security model is asymmetric during the handshake (static and ephemeral Diffie-Hellman key pairs) and symmetric during transport (256-bit-keyed AEAD encryption). The optional PSK mode used in IKpsk2 adds a pre-shared symmetric secret as a post-quantum defensive hedge without changing the handshake round-trips.
 
 ## When to Use It
 
@@ -25,7 +25,7 @@ Select one of twelve handshake patterns (NN, NK, NX, KN, KK, KX, XN, XK, XX, IX,
 
 - **Wrong pattern chosen for the threat model** — selecting NN when authentication is required means either party can be impersonated by anyone; Noise provides no runtime negotiation or fallback to detect this mismatch.
 - **IK or IKpsk2 with an unverified static key** — these patterns assume the initiator already holds the responder's authentic static public key; if this key is substituted by an attacker (e.g., via a compromised key-distribution channel), the responder can be fully impersonated without breaking X25519.
-- **AES-256-GCM nonce counter exhaustion** — the transport nonce is a 64-bit counter; a session that encrypts 2⁶⁴ messages without rekeying will repeat nonces, catastrophically breaking AES-GCM's authentication and confidentiality guarantees.
+- **AES-256-GCM nonce counter exhaustion** — the transport nonce is a 64-bit counter; a session that encrypts 2⁶⁴ messages without rekeying will repeat nonces, catastrophically breaking AES-GCM's authentication and confidentiality guarantees. *(Demo caveat: this teaching implementation tracks the nonce as a JavaScript `number` and trips its "must rekey" guard at 2⁵³−1, the largest exactly-representable integer, rather than the true spec ceiling of 2⁶⁴−1. The behaviour is faithful; the exact threshold is an approximation. A production build would use a BigInt or 64-bit counter.)*
 - **PSK reuse in IKpsk2** — the pre-shared key must be rotated out-of-band; a long-lived PSK that is never rotated steadily erodes its post-quantum and identity-hiding contributions, especially if the PSK is shared across multiple sessions.
 - **Handshake hash not bound at the application layer** — if the application does not verify the channel binding (the final handshake hash) out-of-band or via a higher-level protocol message, a network-level adversary can attempt session confusion attacks across concurrent connections.
 
@@ -44,6 +44,16 @@ cd crypto-lab-noise-pipe
 npm install
 npm run dev
 ```
+
+## Correctness & Tests
+
+The handshake is a real, spec-faithful implementation (CipherState / SymmetricState / HandshakeState, PSK, Split, Rekey) — not a mock. To keep it honest, `npm test` runs a Vitest suite that:
+
+- **Cross-checks the full handshake against published Noise test vectors** from the [noise-c](https://github.com/rweather/noise-c) suite (also reproduced verbatim by Rust `snow` and Haskell `cacophony`). For `NN`, `XX`, `KK`, and `IK` it asserts every handshake message's exact wire bytes, the final handshake hash (channel binding), and the post-`Split()` transport ciphertexts — byte for byte.
+- **Anchors the primitives** with known-answer tests: X25519 (RFC 7748 §6.1), HKDF-SHA-256 (RFC 5869 Test Case 1), SHA-256 and AES-256-GCM (NIST) digests, and the AES-GCM nonce encoding (Noise §12.3, big-endian).
+- **Verifies structural invariants and failure modes** across every advertised pattern: both parties derive matching transport keys, AEAD rejects bit-flips and wrong keys, forged responder static keys are rejected (IK/XK), mismatched PSKs break the handshake, and replayed first messages are (correctly) accepted since core Noise has no replay protection.
+
+These vectors caught a real bug during development: AES-GCM nonces were being encoded little-endian instead of big-endian, which silently corrupted every message after the first keyed one (`n >= 1`). The fix is anchored by the KATs above.
 
 ## Related Demos
 

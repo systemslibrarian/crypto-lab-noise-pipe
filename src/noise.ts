@@ -17,7 +17,20 @@ import {
 import { HandshakePattern, Token } from './patterns';
 
 const HASHLEN = 32; // SHA-256 output length
-const MAX_NONCE = Number.MAX_SAFE_INTEGER; // JS safe integer limit, spec says 2^64-1
+
+/**
+ * Nonce-exhaustion threshold.
+ *
+ * The Noise spec (§5.1) defines the maximum nonce as 2^64-1; a CipherState must
+ * rekey or be destroyed before the counter would reach it. This demo tracks the
+ * nonce as a JavaScript `number`, so it can only represent integers exactly up
+ * to 2^53-1 (Number.MAX_SAFE_INTEGER). We therefore trip the "must rekey" guard
+ * at that lower, JS-safe bound. This is an APPROXIMATION of the real 2^64-1
+ * ceiling — accurate enough to demonstrate the exhaustion behaviour, but not the
+ * exact spec value. A production implementation would track the counter with a
+ * BigInt or a 64-bit integer type.
+ */
+const MAX_NONCE = Number.MAX_SAFE_INTEGER; // 2^53-1; spec ceiling is 2^64-1 (see note above)
 
 // ----- Logging -----
 
@@ -249,6 +262,19 @@ export class HandshakeState {
   private messageIndex: number = 0;
   private psk: Uint8Array | null = null; // pre-shared key (for pskN modifiers)
   private initiator: boolean;
+  /**
+   * Optional queue of pre-generated ephemeral key pairs. When non-empty, the
+   * next `e` write-token consumes one instead of calling generateKeyPair().
+   * This exists solely to make handshakes deterministic for known-answer tests
+   * against published Noise test vectors — production/UI paths never set it, so
+   * ephemerals remain freshly random there.
+   */
+  private fixedEphemerals: KeyPair[] = [];
+
+  /** Test-only: supply the ephemeral key pair(s) this party will use, in order. */
+  setFixedEphemerals(...pairs: KeyPair[]): void {
+    this.fixedEphemerals = [...pairs];
+  }
 
   constructor() {
     this.symmetricState = new SymmetricState();
@@ -477,7 +503,9 @@ export class HandshakeState {
 
     switch (token) {
       case 'e': {
-        this.e = generateKeyPair();
+        this.e = this.fixedEphemerals.length > 0
+          ? this.fixedEphemerals.shift()!
+          : generateKeyPair();
         messageBuffer.push(this.e.publicKey);
         await this.symmetricState.mixHash(this.e.publicKey);
         // PSK mode: MixKey(e.public_key) per spec Section 9
