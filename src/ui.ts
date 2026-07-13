@@ -6,21 +6,27 @@
 import {
   PATTERNS, getPatternNames, getPatternInfo, formatPatternMessages,
   TOKEN_DESCRIPTIONS, GLOSSARY, PROPERTY_EXPLANATIONS, getPredictPrompt,
+  getPatternNamesByComplexity, GUIDED_PATH, WHATS_NEW, TOKEN_EFFECTS,
   PatternInfo, type HandshakePattern, type Token
 } from './patterns';
 import {
   runFullHandshake, type FullHandshakeResult, type StepLog, type MessageLog,
   type PartyStateSnapshot, CipherState,
-  simulateBitFlip, simulateNonceReuse, simulateRSSwap, simulatePSKMismatch, simulateReplay
+  simulateBitFlip, simulateNonceReuse, simulateRSSwap, simulatePSKMismatch, simulateReplay,
+  simulateForwardSecrecy
 } from './noise';
-import { toHex, EMPTY } from './crypto';
+import { toHex, EMPTY, DHLEN } from './crypto';
 
 // ----- State -----
 
-let currentPattern: string = 'XX';
+let currentPattern: string = 'NN';
 let handshakeResult: FullHandshakeResult | null = null;
 let currentStep: number = 0;
 let activePanel: string = 'panel-pattern';
+
+// Anatomy-of-a-token onboarding state
+let anatomyToken: string = 'ee';
+let anatomyRole: 'initiator' | 'responder' = 'initiator';
 
 // Transport (bidirectional with rekey)
 let cI2R: CipherState | null = null; // initiator's send / responder's recv (c1)
@@ -37,6 +43,9 @@ const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matc
 
 export function initUI(): void {
   setupPatternSelector();
+  setupGuidedPath();
+  setupAnatomy();
+  setupPredictReveal();
   setupPanelTabs();
   setupGlossaryTooltip();
   setupKeyboardShortcuts();
@@ -44,7 +53,7 @@ export function initUI(): void {
   setupComparePicker();
   setupTransportLanes();
   setupExportTranscript();
-  selectPattern('XX');
+  selectPattern('NN');
 }
 
 // ----- Keyboard shortcuts -----
@@ -141,6 +150,167 @@ function activatePanel(
   });
 }
 
+// ----- Anatomy of a token (onboarding) -----
+
+/**
+ * For a token + viewer role, return the two operands as {kind, owner}.
+ * kind: 'ephemeral' | 'static'; owner: 'mine' | 'theirs'.
+ * This mirrors HandshakeState.processWriteToken's es/se role branching exactly.
+ */
+function anatomyOperands(token: string, role: 'initiator' | 'responder') {
+  const isI = role === 'initiator';
+  switch (token) {
+    case 'ee':
+      return [
+        { kind: 'ephemeral', owner: 'mine' },
+        { kind: 'ephemeral', owner: 'theirs' }
+      ];
+    case 'ss':
+      return [
+        { kind: 'static', owner: 'mine' },
+        { kind: 'static', owner: 'theirs' }
+      ];
+    case 'es':
+      // initiator: DH(local ephemeral, remote static); responder: DH(local static, remote ephemeral)
+      return isI
+        ? [{ kind: 'ephemeral', owner: 'mine' }, { kind: 'static', owner: 'theirs' }]
+        : [{ kind: 'static', owner: 'mine' }, { kind: 'ephemeral', owner: 'theirs' }];
+    case 'se':
+      // initiator: DH(local static, remote ephemeral); responder: DH(local ephemeral, remote static)
+      return isI
+        ? [{ kind: 'static', owner: 'mine' }, { kind: 'ephemeral', owner: 'theirs' }]
+        : [{ kind: 'ephemeral', owner: 'mine' }, { kind: 'static', owner: 'theirs' }];
+    default:
+      return [{ kind: 'ephemeral', owner: 'mine' }, { kind: 'ephemeral', owner: 'theirs' }];
+  }
+}
+
+function operandLabel(op: { kind: string; owner: string }): string {
+  const who = op.owner === 'mine' ? 'my' : 'their';
+  return `${who} ${op.kind}`;
+}
+
+function setupAnatomy(): void {
+  const tokenBtns = document.querySelectorAll<HTMLButtonElement>('.anatomy-token-btn');
+  const roleBtns = document.querySelectorAll<HTMLButtonElement>('.role-btn');
+
+  tokenBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      anatomyToken = btn.dataset.token || 'ee';
+      tokenBtns.forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+      renderAnatomy(true);
+    });
+  });
+
+  roleBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      anatomyRole = (btn.dataset.role as 'initiator' | 'responder') || 'initiator';
+      roleBtns.forEach(b => {
+        const on = b === btn;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-checked', String(on));
+      });
+      renderAnatomy(true);
+    });
+  });
+
+  renderAnatomy(false);
+}
+
+function renderAnatomy(animate: boolean): void {
+  const keyA = document.getElementById('anatomy-key-a');
+  const keyB = document.getElementById('anatomy-key-b');
+  const explain = document.getElementById('anatomy-explain');
+  const stage = document.getElementById('anatomy-mixer');
+  if (!keyA || !keyB || !explain) return;
+
+  const [a, b] = anatomyOperands(anatomyToken, anatomyRole);
+
+  const paint = (el: HTMLElement, op: { kind: string; owner: string }) => {
+    const nameEl = el.querySelector('.anatomy-key-name');
+    if (nameEl) nameEl.textContent = operandLabel(op);
+    el.classList.toggle('key-ephemeral', op.kind === 'ephemeral');
+    el.classList.toggle('key-static', op.kind === 'static');
+    el.classList.toggle('key-mine', op.owner === 'mine');
+    el.classList.toggle('key-theirs', op.owner === 'theirs');
+  };
+  paint(keyA, a);
+  paint(keyB, b);
+
+  // Re-trigger the slide animation unless reduced motion.
+  if (animate && !reducedMotion && stage) {
+    keyA.classList.remove('slide-in');
+    keyB.classList.remove('slide-in');
+    // Force reflow so the animation restarts.
+    void keyA.offsetWidth;
+    keyA.classList.add('slide-in');
+    keyB.classList.add('slide-in');
+  }
+
+  const fsNote = anatomyToken === 'ee'
+    ? ' Because both keys are ephemeral, this DH is the source of forward secrecy — its private halves vanish when the session ends.'
+    : anatomyToken === 'ss'
+    ? ' Both keys are long-lived statics, so this DH authenticates but provides no forward secrecy on its own.'
+    : ' One key is ephemeral and one is static, so this DH both authenticates a party and contributes fresh, forward-secret material.';
+
+  explain.textContent =
+    `Token “${anatomyToken}”, viewed as the ${anatomyRole}: multiply ${operandLabel(a)} × ${operandLabel(b)}. ` +
+    `The X25519 result is folded into the chaining key (ck), growing the shared secret.` + fsNote;
+}
+
+// ----- Predict-before-step reveal (active retrieval) -----
+
+function correctPredictChoice(): 'h' | 'hk' | 'none' {
+  if (!handshakeResult) return 'h';
+  const info = getPatternInfo(currentPattern);
+  const mp = info.pattern.messages[currentStep];
+  if (!mp) return 'h';
+  const touchesSchedule = mp.tokens.some(t => t === 'ee' || t === 'es' || t === 'se' || t === 'ss' || t === 'psk');
+  return touchesSchedule ? 'hk' : 'h';
+}
+
+let _predictBound = false;
+function setupPredictReveal(): void {
+  if (_predictBound) return;
+  _predictBound = true;
+  const answerEl = document.getElementById('predict-answer');
+  document.querySelectorAll<HTMLButtonElement>('.predict-choice').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const picked = btn.dataset.choice as 'h' | 'hk' | 'none';
+      const correct = correctPredictChoice();
+      const right = picked === correct;
+      document.querySelectorAll<HTMLButtonElement>('.predict-choice').forEach(b => {
+        b.classList.toggle('choice-correct', b.dataset.choice === correct);
+        b.classList.toggle('choice-wrong', b === btn && !right);
+      });
+      if (answerEl) {
+        answerEl.hidden = false;
+        const explain = correct === 'hk'
+          ? 'This message fires a DH (or PSK) token, so h binds the new bytes AND ck→k absorb fresh key material.'
+          : 'This message only sends/receives public keys — h hashes them in, but no DH fires, so ck and k stay put.';
+        answerEl.innerHTML = (right ? '✅ Correct. ' : '❌ Not quite. ') +
+          `The answer is <strong>${escapeHtml(labelForChoice(correct))}</strong>. ` + escapeHtml(explain);
+        answerEl.classList.toggle('answer-right', right);
+        answerEl.classList.toggle('answer-wrong', !right);
+      }
+    });
+  });
+}
+
+function labelForChoice(c: 'h' | 'hk' | 'none'): string {
+  if (c === 'h') return 'only h (transcript)';
+  if (c === 'hk') return 'h and ck / k';
+  return 'nothing';
+}
+
+function resetPredictReveal(): void {
+  const answerEl = document.getElementById('predict-answer');
+  if (answerEl) { answerEl.hidden = true; answerEl.textContent = ''; }
+  document.querySelectorAll<HTMLButtonElement>('.predict-choice').forEach(b => {
+    b.classList.remove('choice-correct', 'choice-wrong');
+  });
+}
+
 // ----- Glossary tooltip -----
 
 function setupGlossaryTooltip(): void {
@@ -192,7 +362,8 @@ function setupPatternSelector(): void {
   const container = document.getElementById('pattern-chips');
   if (!container) return;
 
-  getPatternNames().forEach(name => {
+  // Chips laid out simplest → most complex so the grid itself reads as a ramp.
+  getPatternNamesByComplexity().forEach(name => {
     const btn = document.createElement('button');
     btn.className = 'chip pattern-chip';
     btn.textContent = name;
@@ -204,6 +375,52 @@ function setupPatternSelector(): void {
   });
 }
 
+// ----- Guided path (simplest → most complex milestones) -----
+
+function setupGuidedPath(): void {
+  const row = document.getElementById('guided-path-steps');
+  if (!row) return;
+  GUIDED_PATH.forEach((name, i) => {
+    if (i > 0) {
+      const sep = document.createElement('span');
+      sep.className = 'guided-path-arrow';
+      sep.setAttribute('aria-hidden', 'true');
+      sep.textContent = '→';
+      row.appendChild(sep);
+    }
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'guided-path-step';
+    btn.dataset.pattern = name;
+    btn.setAttribute('aria-label', `Guided step ${i + 1}: ${name} pattern`);
+    btn.innerHTML = `<span class="guided-path-num" aria-hidden="true">${i + 1}</span>${escapeHtml(name)}`;
+    btn.addEventListener('click', () => selectPattern(name));
+    row.appendChild(btn);
+  });
+}
+
+function updateGuidedPathHighlight(name: string): void {
+  document.querySelectorAll<HTMLButtonElement>('.guided-path-step').forEach(b => {
+    const active = b.dataset.pattern === name;
+    b.classList.toggle('active', active);
+    if (active) b.setAttribute('aria-current', 'step');
+    else b.removeAttribute('aria-current');
+  });
+}
+
+function updateWhatsNewBanner(name: string): void {
+  const banner = document.getElementById('whats-new-banner');
+  const text = document.getElementById('whats-new-text');
+  if (!banner || !text) return;
+  const entry = WHATS_NEW[name];
+  if (entry) {
+    text.textContent = entry.text;
+    banner.hidden = false;
+  } else {
+    banner.hidden = true;
+  }
+}
+
 async function selectPattern(name: string): Promise<void> {
   currentPattern = name;
   currentStep = 0;
@@ -213,6 +430,9 @@ async function selectPattern(name: string): Promise<void> {
     chip.classList.toggle('active', isSelected);
     chip.setAttribute('aria-checked', String(isSelected));
   });
+
+  updateGuidedPathHighlight(name);
+  updateWhatsNewBanner(name);
 
   const info = getPatternInfo(name);
   renderPatternInfo(info);
@@ -377,9 +597,13 @@ function renderCurrentStep(): void {
   if (predictText) {
     predictText.innerHTML = escapeHtml(getPredictPrompt(info.pattern, currentStep));
   }
+  resetPredictReveal();
 
   // Message diagram (SVG lane)
   renderMessageDiagram(msg, info.pattern, currentStep);
+
+  // Segmented on-the-wire byte blocks for this message
+  renderWireBlocks(msg);
 
   // Party state cards
   const iState = currentStep === 0 ? handshakeResult.initiatorInitialState : handshakeResult.messageLogs[currentStep - 1].initiatorStateAfter;
@@ -390,29 +614,49 @@ function renderCurrentStep(): void {
   renderPartyState('responder-state', rState, rStateAfter);
 
   // Step body
+  const tokenChips = msg.tokens.map(t => {
+    const eff = TOKEN_EFFECTS[t];
+    const badges = eff
+      ? `${eff.transcript ? '<span class="tok-effect tok-effect-transcript">binds to transcript</span>' : ''}` +
+        `${eff.keySchedule ? '<span class="tok-effect tok-effect-schedule">adds to key schedule</span>' : ''}`
+      : '';
+    return `<span class="token-effect-chip">` +
+      `<code class="gl" data-term="${escapeHtml(t)}" tabindex="0">${escapeHtml(t)}</code>${badges}</span>`;
+  }).join('');
+
   let html = `
     <div class="step-header">
       <span class="step-direction" aria-label="Direction: ${direction}">${direction}</span>
-      <span class="step-tokens">Tokens: ${
-        msg.tokens.map(t => `<code class="gl" data-term="${escapeHtml(t)}" tabindex="0">${escapeHtml(t)}</code>`).join(' ')
-      }</span>
     </div>
+    <div class="step-token-effects" aria-label="Tokens in this message and what each one touches">${tokenChips}</div>
     <div class="step-logs" role="list" aria-label="Handshake operations for message ${currentStep + 1}">
   `;
 
   msg.logs.forEach(log => {
+    // If this log carries DH operands, render a "which two keys?" visual first.
+    const opA = log.details.operandA;
+    const opB = log.details.operandB;
+    const dhVisual = (opA && opB)
+      ? renderDHVisual(opA, opB, log.details.dhOutput)
+      : '';
+
+    const detailRows = Object.entries(log.details)
+      .filter(([k]) => k !== 'operandA' && k !== 'operandB')
+      .map(([k, v]) =>
+        `<div class="detail-row">
+          <span class="detail-key">${escapeHtml(k)}:</span>
+          <span class="detail-value hex-value" title="${escapeHtml(v)}">${escapeHtml(v)}</span>
+          <button class="copy-btn" data-copy="${escapeHtml(v)}" aria-label="Copy hex" type="button">📋</button>
+        </div>`
+      ).join('');
+
     html += `
       <div class="log-entry${reducedMotion ? '' : ' animate-in'}" role="listitem">
         <div class="log-operation">${escapeHtml(log.operation)}</div>
         <div class="log-description">${escapeHtml(log.description)}</div>
+        ${dhVisual}
         <div class="log-details">
-          ${Object.entries(log.details).map(([k, v]) =>
-            `<div class="detail-row">
-              <span class="detail-key">${escapeHtml(k)}:</span>
-              <span class="detail-value hex-value" title="${escapeHtml(v)}">${escapeHtml(v)}</span>
-              <button class="copy-btn" data-copy="${escapeHtml(v)}" aria-label="Copy hex" type="button">📋</button>
-            </div>`
-          ).join('')}
+          ${detailRows}
         </div>
       </div>
     `;
@@ -482,6 +726,112 @@ function renderMessageDiagram(msg: MessageLog, pattern: HandshakePattern, idx: n
   `;
 }
 
+/**
+ * Render the "which two keys were multiplied" visual for a DH token log.
+ * operandA/operandB arrive as "label|hex" strings from the handshake engine.
+ */
+function renderDHVisual(opA: string, opB: string, output?: string): string {
+  const [labelA, hexA = ''] = opA.split('|');
+  const [labelB, hexB = ''] = opB.split('|');
+  const chip = (label: string, hex: string) => {
+    const mine = label.startsWith('my');
+    const isEph = label.includes('ephemeral');
+    const kindClass = isEph ? 'dhk-ephemeral' : 'dhk-static';
+    const ownerClass = mine ? 'dhk-mine' : 'dhk-theirs';
+    return `<span class="dh-key-chip ${kindClass} ${ownerClass}">
+      <span class="dh-key-icon" aria-hidden="true">🔑</span>
+      <span class="dh-key-label">${escapeHtml(label)}</span>
+      <span class="dh-key-hex" title="${escapeHtml(hex)}">${escapeHtml(hex.slice(0, 12))}…</span>
+    </span>`;
+  };
+  const outStr = output ? `${output.slice(0, 12)}…` : '';
+  return `
+    <div class="dh-visual" aria-label="Diffie-Hellman: ${escapeHtml(labelA)} times ${escapeHtml(labelB)}">
+      ${chip(labelA, hexA)}
+      <span class="dh-op" aria-hidden="true">×</span>
+      ${chip(labelB, hexB)}
+      <span class="dh-arrow" aria-hidden="true">→</span>
+      <span class="dh-out" title="${escapeHtml(output ?? '')}">shared secret ${escapeHtml(outStr)}</span>
+    </div>
+  `;
+}
+
+/**
+ * Segmented byte-block view of one handshake message, mirroring the WireGuard
+ * packet diagram but for any pattern. Each block maps to the token that
+ * produced it, and the static block is labeled ENCRYPTED vs PLAINTEXT so the
+ * identity-hiding behaviour of `s` is visible, not just asserted.
+ */
+function renderWireBlocks(msg: MessageLog): void {
+  const container = document.getElementById('wire-blocks');
+  if (!container) return;
+
+  const total = msg.wireBytes.length;
+  const eCount = msg.tokens.filter(t => t === 'e').length;
+  const hasStatic = msg.tokens.includes('s');
+
+  type Seg = { name: string; bytes: number; kind: string; note: string };
+  const segs: Seg[] = [];
+
+  // Each `e` token puts a 32-byte ephemeral public key on the wire, in the clear.
+  for (const t of msg.tokens) {
+    if (t === 'e') {
+      segs.push({ name: 'ephemeral pubkey', bytes: DHLEN, kind: 'blk-e',
+        note: 'From token e — sent unencrypted (public keys are not secret).' });
+    }
+  }
+
+  // The static block, if present, is 32 bytes plaintext or 48 bytes (32 + 16-byte
+  // AEAD tag) once a k exists. Solve for it from the actual wire length so the
+  // ENCRYPTED/PLAINTEXT label reflects the real bytes, never a guess.
+  //
+  // remainder = static block + trailing (empty) payload block. A static is only
+  // encrypted when a k already exists — and if a k exists the trailing payload
+  // carries a 16-byte tag too. So the possible remainders are:
+  //   DHLEN         → static plaintext (32), payload plaintext (0)  [no k]
+  //   DHLEN+16      → static plaintext (32), payload tag (16)       [k appeared this msg, after s]
+  //   DHLEN+16+16   → static encrypted (48), payload tag (16)       [k existed before s]
+  let staticEncrypted = false;
+  if (hasStatic) {
+    const remainder = total - eCount * DHLEN;
+    staticEncrypted = remainder >= DHLEN + 32;
+
+    segs.push(staticEncrypted
+      ? { name: 'static pubkey', bytes: DHLEN, kind: 'blk-s-enc',
+          note: 'From token s — ENCRYPTED under the current k (identity hidden from observers).' }
+      : { name: 'static pubkey', bytes: DHLEN, kind: 'blk-s-plain',
+          note: 'From token s — sent PLAINTEXT (no k derived yet, so the identity is visible on the wire).' });
+    if (staticEncrypted) {
+      segs.push({ name: 'AEAD tag', bytes: 16, kind: 'blk-tag',
+        note: '16-byte AES-GCM tag authenticating the encrypted static key.' });
+    }
+  }
+
+  // Trailing payload block (empty payload here). If a k exists it is a bare
+  // 16-byte AEAD tag; otherwise there are zero payload bytes.
+  const usedByStatic = hasStatic ? (staticEncrypted ? DHLEN + 16 : DHLEN) : 0;
+  const payloadBytes = total - eCount * DHLEN - usedByStatic;
+  if (payloadBytes >= 16) {
+    segs.push({ name: 'payload tag', bytes: 16, kind: 'blk-tag',
+      note: 'Empty payload, but a 16-byte AEAD tag is present because a k now exists.' });
+  }
+
+  container.innerHTML = segs.map(s => {
+    const width = Math.max(56, Math.min(180, s.bytes * 3.2));
+    const enc = s.kind === 'blk-s-enc' ? '🔒 ' : (s.kind === 'blk-s-plain' ? '🔓 ' : '');
+    return `<div class="wire-block ${s.kind}" style="flex:0 0 ${width}px" title="${escapeHtml(s.note)}">
+      <span class="wire-block-name">${enc}${escapeHtml(s.name)}</span>
+      <span class="wire-block-bytes">${s.bytes} B</span>
+    </div>`;
+  }).join('') + `<p class="wire-blocks-note">${total} bytes total. ${
+    hasStatic
+      ? (staticEncrypted
+          ? 'The static identity key is <strong>encrypted</strong> here — a k already exists, so observers cannot see who is connecting.'
+          : 'The static identity key rides <strong>in the clear</strong> here — no k has been derived yet, so an observer can read it.')
+      : 'No static identity keys are sent in this message.'
+  }</p>`;
+}
+
 function renderPartyState(elId: string, before: PartyStateSnapshot, after: PartyStateSnapshot): void {
   const el = document.getElementById(elId);
   if (!el) return;
@@ -511,18 +861,35 @@ function renderPartyState(elId: string, before: PartyStateSnapshot, after: Party
   const hChanged = toHex(before.h) !== toHex(after.h);
   const ckChanged = toHex(before.ck) !== toHex(after.ck);
 
-  el.innerHTML = items + `
-    <div class="state-row state-h ${hChanged ? 'state-changed' : ''}">
-      <span class="state-key"><span class="gl" data-term="h" tabindex="0">h</span></span>
-      <span class="state-val" title="${toHex(after.h)}">${toHex(after.h).slice(0, 16)}…</span>
+  // Two clearly-captioned tracks: transcript binding (h) vs key derivation (ck→k).
+  el.innerHTML = `
+    <div class="state-track state-track-keys">
+      <p class="state-track-caption">Keys this party holds</p>
+      ${items}
     </div>
-    <div class="state-row state-ck ${ckChanged ? 'state-changed' : ''}">
-      <span class="state-key"><span class="gl" data-term="ck" tabindex="0">ck</span></span>
-      <span class="state-val" title="${toHex(after.ck)}">${toHex(after.ck).slice(0, 16)}…</span>
+    <div class="state-track state-track-transcript">
+      <p class="state-track-caption">
+        <span class="track-dot track-dot-transcript" aria-hidden="true"></span>
+        Transcript — proves nobody tampered
+      </p>
+      <div class="state-row state-h ${hChanged ? 'state-changed' : ''}">
+        <span class="state-key"><span class="gl" data-term="h" tabindex="0">h</span></span>
+        <span class="state-val" title="${toHex(after.h)}">${toHex(after.h).slice(0, 16)}…</span>
+      </div>
     </div>
-    <div class="state-row state-k">
-      <span class="state-key"><span class="gl" data-term="k" tabindex="0">k</span></span>
-      <span class="state-val">${after.hasCipherKey ? '✓ installed' : '<em>empty</em>'}</span>
+    <div class="state-track state-track-schedule">
+      <p class="state-track-caption">
+        <span class="track-dot track-dot-schedule" aria-hidden="true"></span>
+        Key schedule — grows with each DH, becomes the session keys
+      </p>
+      <div class="state-row state-ck ${ckChanged ? 'state-changed' : ''}">
+        <span class="state-key"><span class="gl" data-term="ck" tabindex="0">ck</span></span>
+        <span class="state-val" title="${toHex(after.ck)}">${toHex(after.ck).slice(0, 16)}…</span>
+      </div>
+      <div class="state-row state-k">
+        <span class="state-key"><span class="gl" data-term="k" tabindex="0">k</span></span>
+        <span class="state-val">${after.hasCipherKey ? '✓ installed' : '<em>empty</em>'}</span>
+      </div>
     </div>
   `;
 }
@@ -693,6 +1060,10 @@ function setupBreakItPanel(): void {
           }
           case 'replay': {
             r = await simulateReplay(info.pattern);
+            break;
+          }
+          case 'forwardsecrecy': {
+            r = await simulateForwardSecrecy(info.pattern);
             break;
           }
           default:

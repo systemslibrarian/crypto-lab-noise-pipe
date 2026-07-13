@@ -354,6 +354,51 @@ export function getPatternInfo(name: string): PatternInfo {
   return info;
 }
 
+/**
+ * Complexity ordering, simplest → most complex, for the guided newcomer ramp.
+ * A newcomer should meet a *complete* handshake with the fewest moving parts
+ * (NN: two messages, no statics, no PSK) before tokens like es/ss/psk appear.
+ * The four **milestone** patterns form the guided path: NN → NK → XX → IKpsk2.
+ */
+export const COMPLEXITY_ORDER: string[] = [
+  'NN', 'NK', 'NX', 'KN', 'IN', 'KX', 'XN', 'XK', 'KK', 'IX', 'IK', 'XX', 'IKpsk2'
+];
+
+/** The short guided path a newcomer is nudged along. */
+export const GUIDED_PATH: string[] = ['NN', 'NK', 'XX', 'IKpsk2'];
+
+/** Pattern names ordered simplest → most complex (for chip layout / stepping). */
+export function getPatternNamesByComplexity(): string[] {
+  const known = new Set(COMPLEXITY_ORDER);
+  const rest = getPatternNames().filter(n => !known.has(n));
+  return [...COMPLEXITY_ORDER.filter(n => PATTERNS[n]), ...rest];
+}
+
+/**
+ * One-line "what's new in this pattern vs the previous milestone" for the
+ * guided banner. Keyed by the target pattern; describes what capability the
+ * newly-introduced tokens buy you, so the delta — not the whole pattern — is
+ * what the learner focuses on.
+ */
+export const WHATS_NEW: Record<string, { from: string; text: string }> = {
+  NN: {
+    from: '',
+    text: 'Start here. The simplest complete Noise handshake: just two ephemeral keys (e) and one DH between them (ee). No identities, no long-term keys — anonymous but already forward-secret.'
+  },
+  NK: {
+    from: 'NN',
+    text: 'New vs NN: the es token. The initiator now DHs its ephemeral against the responder\'s pre-known static key, so the initiator can be sure it is talking to the real server — the responder is now authenticated.'
+  },
+  XX: {
+    from: 'NK',
+    text: 'New vs NK: the s and ss/se tokens, plus a 3rd message. Both sides now transmit their static keys — encrypted, once a k exists — so authentication becomes mutual and both identities stay hidden from on-path observers.'
+  },
+  IKpsk2: {
+    from: 'XX',
+    text: 'New vs XX: the responder key is pre-known (so the initiator sends its static in message 1 — 1-RTT), and a psk token mixes a pre-shared secret into the key schedule as a post-quantum hedge. This is WireGuard.'
+  }
+};
+
 /** Format a pattern's message sequence for display */
 export function formatPatternMessages(pattern: HandshakePattern): string {
   const lines: string[] = [];
@@ -368,6 +413,30 @@ export function formatPatternMessages(pattern: HandshakePattern): string {
   });
   return lines.join('\n');
 }
+
+/**
+ * What each token does to the two running secrets, for the split state-card
+ * captions. `transcript` = mixes bytes into h (MixHash); `keySchedule` = feeds
+ * the DH/PSK output into ck and derives a fresh k (MixKey / MixKeyAndHash).
+ */
+export interface TokenEffect {
+  transcript: boolean;   // touches h
+  keySchedule: boolean;  // touches ck → k
+  label: string;         // short human phrase for the firing token
+}
+
+export const TOKEN_EFFECTS: Record<string, TokenEffect> = {
+  // `e`/`s` send a public key, whose bytes are hashed into h. In PSK patterns an
+  // `e` additionally MixKeys its own public key, but the dominant teaching point
+  // is transcript binding, so we label the ordinary case.
+  'e':  { transcript: true,  keySchedule: false, label: 'ephemeral pubkey hashed into the transcript' },
+  's':  { transcript: true,  keySchedule: false, label: 'static pubkey (encrypted if a k exists) hashed into the transcript' },
+  'ee': { transcript: false, keySchedule: true,  label: 'DH output folded into the key schedule' },
+  'es': { transcript: false, keySchedule: true,  label: 'DH output folded into the key schedule' },
+  'se': { transcript: false, keySchedule: true,  label: 'DH output folded into the key schedule' },
+  'ss': { transcript: false, keySchedule: true,  label: 'DH output folded into the key schedule' },
+  'psk':{ transcript: true,  keySchedule: true,  label: 'pre-shared key mixed into BOTH the transcript and the key schedule' }
+};
 
 /** Token descriptions per Noise spec */
 export const TOKEN_DESCRIPTIONS: Record<string, string> = {

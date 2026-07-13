@@ -190,9 +190,24 @@
     <!-- Panel 1: Pattern Selector -->
     <section id="panel-pattern" role="tabpanel" aria-labelledby="tab-pattern">
       <h2>Pattern Selector</h2>
-      <p>Select a Noise handshake pattern to explore its message flow and security properties.</p>
+      <p>Select a Noise handshake pattern to explore its message flow and security properties. New here? Follow the guided path from the simplest handshake to WireGuard's.</p>
 
-      <div id="pattern-chips" class="pattern-chips-container" role="radiogroup" aria-label="Select a Noise pattern"></div>
+      <!-- Guided path: simplest → most complex -->
+      <div class="guided-path" aria-label="Guided learning path">
+        <span class="guided-path-label">Guided path:</span>
+        <div id="guided-path-steps" class="guided-path-steps" role="group" aria-label="Guided path steps, simplest to most complex"></div>
+      </div>
+
+      <!-- What's-new-in-this-pattern banner -->
+      <div id="whats-new-banner" class="whats-new-banner" role="status" aria-live="polite" hidden>
+        <span class="whats-new-tag" aria-hidden="true">What's new</span>
+        <p id="whats-new-text" class="whats-new-text"></p>
+      </div>
+
+      <details class="all-patterns" id="all-patterns-disclosure">
+        <summary>All 13 patterns (simplest → most complex)</summary>
+        <div id="pattern-chips" class="pattern-chips-container" role="radiogroup" aria-label="Select a Noise pattern"></div>
+      </details>
 
       <div class="pattern-detail" aria-live="polite">
         <h3 id="pattern-name" class="pattern-name-display"></h3>
@@ -235,6 +250,63 @@
       </div>
       <p>Step through each handshake message to see DH operations, key evolution, and hash updates.</p>
 
+      <!-- Anatomy of a token: builds up the DH-token notation before the grid. -->
+      <details class="anatomy" id="anatomy-box" open>
+        <summary>🧩 Anatomy of a token — start here if <code>e, s, ee, es, se, ss</code> look like noise</summary>
+        <div class="anatomy-body">
+          <p class="anatomy-lead">
+            Every Noise handshake is built from tiny two-letter <strong>DH tokens</strong>. Each names
+            <em>which two keys get multiplied together</em>. The result is folded into a growing shared secret.
+            Pick a token below and watch the two keys slide into the mixer.
+          </p>
+
+          <div class="anatomy-tokens" role="group" aria-label="Choose a token to visualize">
+            <button type="button" class="anatomy-token-btn" data-token="ee" aria-pressed="true">ee</button>
+            <button type="button" class="anatomy-token-btn" data-token="es" aria-pressed="false">es</button>
+            <button type="button" class="anatomy-token-btn" data-token="se" aria-pressed="false">se</button>
+            <button type="button" class="anatomy-token-btn" data-token="ss" aria-pressed="false">ss</button>
+          </div>
+
+          <div class="anatomy-role-toggle">
+            <span id="anatomy-role-label" class="anatomy-role-caption">Your role:</span>
+            <div class="role-switch" role="radiogroup" aria-labelledby="anatomy-role-label">
+              <button type="button" class="role-btn active" data-role="initiator" role="radio" aria-checked="true">🅰 Initiator</button>
+              <button type="button" class="role-btn" data-role="responder" role="radio" aria-checked="false">🅱 Responder</button>
+            </div>
+          </div>
+
+          <!-- The mixer visual -->
+          <div class="anatomy-stage" aria-hidden="true">
+            <div class="anatomy-key anatomy-key-left" id="anatomy-key-a">
+              <span class="anatomy-key-icon">🔑</span>
+              <span class="anatomy-key-name">my ephemeral</span>
+            </div>
+            <div class="anatomy-mixer" id="anatomy-mixer">
+              <span class="anatomy-mixer-op">DH</span>
+              <span class="anatomy-mixer-times">×</span>
+            </div>
+            <div class="anatomy-key anatomy-key-right" id="anatomy-key-b">
+              <span class="anatomy-key-icon">🔑</span>
+              <span class="anatomy-key-name">their static</span>
+            </div>
+            <div class="anatomy-emit" id="anatomy-emit">
+              <span class="anatomy-emit-arrow">↓</span>
+              <span class="anatomy-emit-label">updates the <span class="gl" data-term="ck" tabindex="0">chaining key (ck)</span></span>
+            </div>
+          </div>
+
+          <!-- Screen-reader + text-mode description of the current token -->
+          <p id="anatomy-explain" class="anatomy-explain" aria-live="polite"></p>
+
+          <p class="anatomy-flip-note">
+            Notice: toggling <strong>Initiator ↔ Responder</strong> physically swaps which side is
+            <em>my</em> key and which is <em>theirs</em>. That is the whole trick behind <code>es</code>
+            and <code>se</code> — the letters name roles (ephemeral, static), and <em>your role decides</em>
+            whether the ephemeral is yours or theirs. Same token, mirrored operands.
+          </p>
+        </div>
+      </details>
+
       <div id="handshake-status" class="status-message" aria-live="polite"></div>
 
       <!-- Pre-message "Step 0" card (only shown when pattern has preMessages) -->
@@ -257,11 +329,32 @@
       <!-- Animated message lane diagram -->
       <div id="message-diagram" class="message-diagram" aria-label="Message direction diagram"></div>
 
+      <!-- Segmented on-the-wire byte blocks for this message -->
+      <div class="wire-blocks-wrap">
+        <h4 class="wire-blocks-title">On the wire — this message, byte by byte</h4>
+        <div id="wire-blocks" class="wire-blocks" tabindex="0" role="region" aria-label="Byte segments sent on the wire for this message"></div>
+      </div>
+
       <!-- Predict-before-step prompt -->
       <details id="predict-box" class="predict-box">
         <summary>🔮 Predict before you step</summary>
         <p id="predict-text"></p>
+        <div class="predict-choices" role="group" aria-label="Predict what changes after this message">
+          <p class="predict-q">Which running secrets change after this message?</p>
+          <div class="predict-btn-row">
+            <button type="button" class="predict-choice" data-choice="h">only h (transcript)</button>
+            <button type="button" class="predict-choice" data-choice="hk">h and ck / k (transcript + key schedule)</button>
+            <button type="button" class="predict-choice" data-choice="none">nothing changes</button>
+          </div>
+          <p id="predict-answer" class="predict-answer" aria-live="polite" hidden></p>
+        </div>
       </details>
+
+      <!-- Two-track explainer: why there are two running secrets -->
+      <div class="track-legend" aria-hidden="true">
+        <span class="track-legend-item track-legend-transcript">Transcript (h): everything said so far, hashed — proves nobody tampered.</span>
+        <span class="track-legend-item track-legend-schedule">Key schedule (ck→k): the secret that grows with each DH, and becomes the session keys.</span>
+      </div>
 
       <!-- Per-party state cards -->
       <div class="party-state-grid" aria-label="Per-party state">
@@ -378,6 +471,13 @@
           <p>Capture the initiator's first message and deliver it to a fresh responder. Noise core has no replay protection — WireGuard adds a TAI64N timestamp.</p>
           <button class="btn btn-primary breakit-btn" data-attack="replay">Run attack</button>
           <div class="breakit-result" data-result="replay"></div>
+        </div>
+
+        <div class="breakit-card">
+          <h4>6. Compromise the static keys — after the fact</h4>
+          <p>Record a transport message, finish the session, then <em>steal both static private keys</em>. Because the session key came from the <em>discarded</em> ephemeral DH, the recorded ciphertext still won't decrypt — while a hypothetical static-only channel leaks instantly. This is <span class="gl" data-term="forward secrecy" tabindex="0">forward secrecy</span> shown holding vs breaking.</p>
+          <button class="btn btn-primary breakit-btn" data-attack="forwardsecrecy">Run demonstration</button>
+          <div class="breakit-result" data-result="forwardsecrecy"></div>
         </div>
       </div>
     </section>
