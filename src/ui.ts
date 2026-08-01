@@ -1179,9 +1179,11 @@ export function renderPatternComparison(): void {
       const explainer = document.getElementById('comparison-explainer');
       if (!explainer) return;
       explainer.hidden = false;
+      const specNote = (info.specNotes as Record<string, string | undefined> | undefined)?.[prop];
       explainer.innerHTML = `
         <h4>${pattern} — ${propLabel(prop)}: <span class="security-${value}">${value}</span></h4>
         <p>${escapeHtml(PROPERTY_EXPLANATIONS[prop]?.[value] ?? 'No explanation available.')}</p>
+        ${specNote ? `<p class="explainer-meta"><strong>In ${escapeHtml(pattern)} specifically:</strong> ${escapeHtml(specNote)}</p>` : ''}
         <p class="explainer-meta"><strong>Pattern context:</strong> ${escapeHtml(info.description)}</p>
       `;
       explainer.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'nearest' });

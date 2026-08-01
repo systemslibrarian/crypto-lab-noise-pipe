@@ -48,6 +48,12 @@ export interface PatternInfo {
   realWorld: string;
   /** How this pattern compares to TLS's negotiated equivalent */
   vsTLS: string;
+  /**
+   * Per-pattern nuance behind the coarse security labels, keyed by property.
+   * Cites the Noise spec Rev 34 grades (§7.7 payload security, §7.8 identity
+   * hiding) that the four-value labels necessarily flatten.
+   */
+  specNotes?: Partial<Record<keyof SecurityProperties, string>>;
 }
 
 // ----- Pattern Definitions (Noise spec Rev 34, Section 7.4 & 7.5) -----
@@ -196,7 +202,38 @@ const IKpsk2: HandshakePattern = {
 };
 
 // ----- Security Properties -----
-// Based on Noise spec Rev 34, Section 7.7 and analysis tables
+// Based on Noise spec Rev 34, Section 7.7 (payload security) and Section 7.8
+// (identity hiding). The spec grades every payload and every static key on a
+// numeric scale; the four-value labels below are a deliberate simplification,
+// so the rule behind each one is stated here and applied uniformly to all 13
+// patterns. Per-pattern `specNotes` carry the nuance the labels flatten.
+//
+// forwardSecrecy — graded on the WHOLE session, handshake payloads included:
+//   'full'    the pattern encrypts nothing before the ephemeral-ephemeral DH
+//             (`ee`) has been mixed in, so everything it does protect stays
+//             protected under a later static-key compromise. Patterns opening
+//             with a bare `e` have no key yet for a first-message payload, so
+//             such a payload travels in cleartext (spec destination 0) — visible
+//             from the start, but not a forward-secrecy failure.
+//   'partial' the pattern pre-shares the responder's static key and therefore
+//             encrypts its FIRST message payload before `ee` fires, using only
+//             `es` (and `ss`). The spec grades that payload destination 2 —
+//             "encryption to a known recipient, forward secrecy for sender
+//             compromise only". Transport keys are still fully forward secret;
+//             the first-message payload is not. This is exactly the 0-RTT-style
+//             trade-off, and it applies to NK, KK, XK, IK and IKpsk2.
+//   'none'    no ephemeral DH at all. No pattern here is in this class.
+//
+// identityHiding — the rule is: a party's static public key counts as HIDDEN
+//   when it never appears in cleartext on the wire, whether because it is
+//   pre-shared out of band, encrypted before transmission, or absent from the
+//   pattern entirely. A party counts as EXPOSED only when the pattern sends its
+//   static key in the clear (spec §7.8 property 0). Applied consistently this
+//   leaves only IN and IX exposing anyone, which is itself the point: Noise
+//   encrypts identities by default where TLS does not. "Hidden from the wire"
+//   is not the same as unlinkable, so the §7.8 grade for each party — including
+//   the ones a passive attacker can still confirm by guessing a candidate key —
+//   is recorded in `specNotes`.
 
 export const PATTERNS: Record<string, PatternInfo> = {
   NN: {
@@ -204,91 +241,135 @@ export const PATTERNS: Record<string, PatternInfo> = {
     security: { senderAuth: 'none', forwardSecrecy: 'full', identityHiding: 'both' },
     description: 'No authentication. Anonymous ephemeral DH. Forward secret but no identity verification.',
     realWorld: 'Early QUIC drafts, anonymous tunneling',
-    vsTLS: 'TLS has no equivalent — anonymous cipher suites were removed in TLS 1.3. Noise lets you pick anonymity by design.'
+    vsTLS: 'TLS has no equivalent — anonymous cipher suites were removed in TLS 1.3. Noise lets you pick anonymity by design.',
+    specNotes: {
+      identityHiding: 'Neither party has a static key in this pattern, so there is no identity to leak — hidden by absence, not by protection. Spec §7.8 marks both parties "-".'
+    }
   },
   NK: {
     pattern: NK,
-    security: { senderAuth: 'none', forwardSecrecy: 'full', identityHiding: 'initiator' },
+    security: { senderAuth: 'none', forwardSecrecy: 'partial', identityHiding: 'both' },
     description: 'Initiator authenticates responder via known static key. Initiator remains anonymous.',
     realWorld: 'Connecting to known server without client auth',
-    vsTLS: 'Like TLS 1.3 server-auth, but the responder key is pinned at compile time — no certificate chain, no CA, no SNI leak.'
+    vsTLS: 'Like TLS 1.3 server-auth, but the responder key is pinned at compile time — no certificate chain, no CA, no SNI leak.',
+    specNotes: {
+      forwardSecrecy: 'Message 1 is `e, es`: its payload is encrypted before `ee` runs, so it is graded destination 2 — forward secret against initiator compromise only. Stealing the responder\'s static key later decrypts any recorded first-message payload. Everything from message 2 onward, transport keys included, is fully forward secret.',
+      identityHiding: 'The initiator has no static key; the responder\'s is pre-shared and never transmitted. But spec §7.8 grades the responder 3 — a passive attacker who guesses a candidate responder private key can confirm the guess against a recorded handshake. Absent from the wire is not the same as unlinkable.'
+    }
   },
   NX: {
     pattern: NX,
-    security: { senderAuth: 'none', forwardSecrecy: 'full', identityHiding: 'initiator' },
+    security: { senderAuth: 'none', forwardSecrecy: 'full', identityHiding: 'both' },
     description: 'Responder sends static key during handshake. Initiator authenticates responder but stays anonymous.',
     realWorld: 'TOFU-style server authentication',
-    vsTLS: 'TLS 1.3 with server cert but no client auth — except identity is a raw key, trust is TOFU not PKI.'
+    vsTLS: 'TLS 1.3 with server cert but no client auth — except identity is a raw key, trust is TOFU not PKI.',
+    specNotes: {
+      identityHiding: 'The one static key this pattern transmits is the RESPONDER\'s, sent encrypted in message 2 after `ee`. The initiator has no static key at all. Spec §7.8 grades the responder 1: encrypted with forward secrecy, but any anonymous initiator can open a handshake and read it, so the responder is identifiable to anyone willing to connect.'
+    }
   },
   KN: {
     pattern: KN,
-    security: { senderAuth: 'one-way', forwardSecrecy: 'full', identityHiding: 'none' },
+    security: { senderAuth: 'one-way', forwardSecrecy: 'full', identityHiding: 'both' },
     description: 'Responder knows initiator static key. One-way authentication of initiator.',
     realWorld: 'Device-to-server with pre-enrolled device keys',
-    vsTLS: 'TLS has no clean equivalent — TLS client auth requires a server cert too. Noise lets you auth only one side.'
+    vsTLS: 'TLS has no clean equivalent — TLS client auth requires a server cert too. Noise lets you auth only one side.',
+    specNotes: {
+      identityHiding: 'The initiator\'s static key is pre-shared, never sent; the responder has none. Spec §7.8 grades the initiator 7 — an active attacker who impersonates the responder can afterwards test candidate initiator public keys against the recorded run.'
+    }
   },
   KK: {
     pattern: KK,
-    security: { senderAuth: 'mutual', forwardSecrecy: 'full', identityHiding: 'none' },
-    description: 'Both parties know each other\'s static keys. Mutual authentication with full forward secrecy.',
+    security: { senderAuth: 'mutual', forwardSecrecy: 'partial', identityHiding: 'both' },
+    description: 'Both parties know each other\'s static keys. Mutual authentication, but the first message payload predates the ephemeral-ephemeral DH.',
     realWorld: 'Peer-to-peer with pre-shared identity keys',
-    vsTLS: 'Like mutual-TLS with pinned certs, but zero bytes of identity flow over the wire — both keys are pre-shared.'
+    vsTLS: 'Like mutual-TLS with pinned certs, but zero bytes of identity flow over the wire — both keys are pre-shared.',
+    specNotes: {
+      forwardSecrecy: 'Message 1 is `e, es, ss`: its payload is encrypted using the two parties\' static keys before `ee` runs, so it is graded destination 2. Compromising either static key later decrypts a recorded first-message payload. Transport keys remain fully forward secret.',
+      identityHiding: 'Both static keys are pre-shared and neither is transmitted. Spec §7.8 grades both parties 5 — a passive attacker can still test a candidate (responder private key, initiator public key) pair against a recorded run.'
+    }
   },
   KX: {
     pattern: KX,
-    security: { senderAuth: 'mutual', forwardSecrecy: 'full', identityHiding: 'responder' },
-    description: 'Initiator static known, responder sends static during handshake. Responder identity hidden from passive observers.',
+    security: { senderAuth: 'mutual', forwardSecrecy: 'full', identityHiding: 'both' },
+    description: 'Initiator static known, responder sends static during handshake. Neither identity appears in cleartext.',
     realWorld: 'Authenticated sessions with responder privacy',
-    vsTLS: 'TLS always reveals server identity in cleartext SNI/cert. Noise KX hides the responder behind the handshake key schedule.'
+    vsTLS: 'TLS always reveals server identity in cleartext SNI/cert. Noise KX hides the responder behind the handshake key schedule.',
+    specNotes: {
+      identityHiding: 'The initiator\'s static key is pre-shared; the responder\'s is sent encrypted in message 2. Spec §7.8 grades the initiator 7 and the responder 6 — the responder\'s key has only weak forward secrecy, so an active attacker who later learns the initiator\'s private key can decrypt it from a recorded run.'
+    }
   },
   XN: {
     pattern: XN,
-    security: { senderAuth: 'one-way', forwardSecrecy: 'full', identityHiding: 'initiator' },
+    security: { senderAuth: 'one-way', forwardSecrecy: 'full', identityHiding: 'both' },
     description: 'Initiator transmits static key in third message. No responder authentication.',
     realWorld: 'Client identifies itself to unauthenticated relay',
-    vsTLS: 'No TLS analog — TLS clients can\'t authenticate to a server that itself has no identity.'
+    vsTLS: 'No TLS analog — TLS clients can\'t authenticate to a server that itself has no identity.',
+    specNotes: {
+      identityHiding: 'The initiator\'s static key is sent encrypted in message 3; the responder has none. Spec §7.8 grades the initiator 2 — encrypted with forward secrecy, but the responder is unauthenticated, so it is being handed to whoever answered the connection.'
+    }
   },
   XK: {
     pattern: XK,
-    security: { senderAuth: 'mutual', forwardSecrecy: 'full', identityHiding: 'initiator' },
-    description: 'Responder key known in advance, initiator sends static encrypted. Initiator identity hidden from passive attackers.',
+    security: { senderAuth: 'mutual', forwardSecrecy: 'partial', identityHiding: 'both' },
+    description: 'Responder key known in advance, initiator sends static encrypted in message 3. Best identity hiding of the pre-shared-responder patterns.',
     realWorld: 'Signal X3DH-like flows, connecting to known server with client auth',
-    vsTLS: 'TLS 1.3 with client cert — but the client cert is sent in cleartext to anyone holding the server key. XK encrypts it.'
+    vsTLS: 'TLS 1.3 with client cert — but the client cert is sent in cleartext to anyone holding the server key. XK encrypts it.',
+    specNotes: {
+      forwardSecrecy: 'Message 1 is `e, es`: its payload is encrypted before `ee` runs and is graded destination 2, so a later compromise of the responder\'s static key decrypts any recorded first-message payload. Messages 2 and 3 and all transport keys are fully forward secret.',
+      identityHiding: 'The initiator\'s static key goes out encrypted in message 3, after the responder is authenticated — spec §7.8 grade 8, the strongest in the table. The responder\'s is pre-shared, graded 3 (a passive attacker can confirm a guessed responder private key). This is why Lightning BOLT #8 picked XK.'
+    }
   },
   XX: {
     pattern: XX,
     security: { senderAuth: 'mutual', forwardSecrecy: 'full', identityHiding: 'both' },
     description: 'Both parties transmit static keys encrypted. Mutual authentication with identity hiding for both parties.',
     realWorld: 'libp2p secure channel, general-purpose mutual auth',
-    vsTLS: 'Closest TLS analog is mTLS — but XX takes 3 messages (not 2 RTT) and hides both identities from on-path observers.'
+    vsTLS: 'Closest TLS analog is mTLS — but XX takes 3 messages (not 2 RTT) and hides both identities from on-path observers.',
+    specNotes: {
+      identityHiding: 'Both static keys are transmitted encrypted after `ee`. Spec §7.8 grades the initiator 8 (encrypted with forward secrecy to an authenticated party) and the responder 1 (any anonymous initiator can connect and learn it). XX needs no pre-shared knowledge to get there, which is why it is the general-purpose default.'
+    }
   },
   IN: {
     pattern: IN,
-    security: { senderAuth: 'one-way', forwardSecrecy: 'full', identityHiding: 'none' },
-    description: 'Initiator sends static key immediately (unencrypted). One-way auth, no identity hiding.',
+    security: { senderAuth: 'one-way', forwardSecrecy: 'full', identityHiding: 'responder' },
+    description: 'Initiator sends static key immediately, in cleartext. One-way auth, no privacy for the client.',
     realWorld: 'Quick client identification without privacy',
-    vsTLS: 'No TLS analog — TLS never sends client identity before the server is authenticated.'
+    vsTLS: 'No TLS analog — TLS never sends client identity before the server is authenticated.',
+    specNotes: {
+      identityHiding: 'Message 1 is `e, s` with the static key unencrypted — spec §7.8 grade 0, transmitted in clear. The responder has no static key to expose, so it is hidden by absence. IN and IX are the only patterns here that put any identity on the wire in the clear.'
+    }
   },
   IK: {
     pattern: IK,
-    security: { senderAuth: 'mutual', forwardSecrecy: 'full', identityHiding: 'initiator' },
-    description: 'Initiator knows responder key, sends own static encrypted in first message. Fewest round trips with mutual auth.',
+    security: { senderAuth: 'mutual', forwardSecrecy: 'partial', identityHiding: 'both' },
+    description: 'Initiator knows responder key, sends own static encrypted in first message. Fewest round trips with mutual auth — paid for with the first message\'s forward secrecy.',
     realWorld: 'Low-latency encrypted channels, basis for WireGuard\'s IKpsk2',
-    vsTLS: 'Like TLS 1.3 0-RTT with mTLS — but Noise makes the responder-key requirement explicit; no fallback to weaker auth.'
+    vsTLS: 'Like TLS 1.3 0-RTT with mTLS — but Noise makes the responder-key requirement explicit; no fallback to weaker auth.',
+    specNotes: {
+      forwardSecrecy: 'Message 1 is `e, es, s, ss`: the initiator\'s static key AND the payload are encrypted before `ee` runs, graded destination 2. Anyone who later steals the responder\'s static key can decrypt a recorded first message — payload and initiator identity both. This is the same 0-RTT trade TLS 1.3 early data makes. Transport keys are fully forward secret.',
+      identityHiding: 'The initiator\'s static key is encrypted, but only to the responder\'s static key — spec §7.8 grade 4, encrypted WITHOUT forward secrecy. The responder\'s is pre-shared, graded 3. So "hidden" here means hidden from a passive attacker today, not from one who compromises the responder tomorrow.'
+    }
   },
   IX: {
     pattern: IX,
-    security: { senderAuth: 'mutual', forwardSecrecy: 'full', identityHiding: 'none' },
-    description: 'Both send static keys: initiator in first msg, responder in second. No identity hiding.',
+    security: { senderAuth: 'mutual', forwardSecrecy: 'full', identityHiding: 'responder' },
+    description: 'Both send static keys: initiator in message 1 in cleartext, responder encrypted in message 2.',
     realWorld: 'Fast mutual authentication without privacy',
-    vsTLS: 'Mutual TLS without cert encryption — both identities flow plaintext, but no PKI overhead.'
+    vsTLS: 'Mutual TLS without cert encryption — the initiator\'s identity flows in plaintext, but no PKI overhead.',
+    specNotes: {
+      identityHiding: 'Message 1 is `e, s` with the initiator\'s static key unencrypted — spec §7.8 grade 0. The responder\'s is encrypted in message 2 but graded 6, weak forward secrecy: an active attacker who later learns the initiator\'s private key can recover it from a recording.'
+    }
   },
   IKpsk2: {
     pattern: IKpsk2,
-    security: { senderAuth: 'mutual', forwardSecrecy: 'full', identityHiding: 'initiator' },
-    description: 'IK with pre-shared key mixed after second message. WireGuard\'s handshake pattern. PSK adds post-quantum defensive layer.',
+    security: { senderAuth: 'mutual', forwardSecrecy: 'partial', identityHiding: 'both' },
+    description: 'IK with a pre-shared key mixed in during message 2. WireGuard\'s handshake pattern. The PSK adds a post-quantum defensive layer, but arrives too late to protect message 1.',
     realWorld: 'WireGuard VPN (Donenfeld, 2017)',
-    vsTLS: 'TLS 1.3 has PSK mode but only for resumption. Noise IKpsk2 uses PSK as a primary post-quantum hedge alongside ECDH.'
+    vsTLS: 'TLS 1.3 also has a PSK mode, and RFC 8446 §2.2 supports both externally provisioned PSKs and PSKs established by a previous connection (resumption) — the difference is emphasis, not capability: Noise IKpsk2 treats the PSK as a primary post-quantum hedge alongside ECDH, where TLS deployments overwhelmingly use it for resumption.',
+    specNotes: {
+      forwardSecrecy: 'Inherits IK\'s message-1 exposure: `e, es, s, ss` encrypts the initiator\'s static key and payload before `ee`, graded destination 2. The `psk` token lands in message 2 (that is what the "2" in IKpsk2 means), so it does not protect message 1 either. Transport keys are fully forward secret, and the PSK does make them resistant to an attacker who breaks X25519.',
+      identityHiding: 'Same as IK — spec §7.8 grade 4 for the initiator (encrypted to the responder\'s static key, no forward secrecy) and 3 for the responder. WireGuard layers its own cookie and load-hiding mechanisms on top; the pattern alone does not hide the initiator from a future responder-key compromise.'
+    }
   }
 };
 
@@ -301,15 +382,15 @@ export const PROPERTY_EXPLANATIONS: Record<string, Record<string, string>> = {
     'mutual': 'Both parties prove possession of their static keys before the handshake completes.'
   },
   forwardSecrecy: {
-    'none': 'Past sessions can be decrypted if static keys are later compromised.',
-    'partial': 'Some session keys depend only on static keys — compromise of statics breaks forward secrecy for those keys.',
-    'full': 'Every transport key derives from ephemeral DH. Past sessions remain secure even if all static keys are later stolen.'
+    'none': 'No ephemeral DH at all — every recorded session is decryptable once a static key leaks.',
+    'partial': 'Transport keys are fully forward secret, but this pattern pre-shares the responder\'s static key and so encrypts its FIRST message payload before the ephemeral-ephemeral DH runs, using only `es` (and `ss`). The Noise spec grades that payload destination 2 — "forward secrecy for sender compromise only". Steal the responder\'s static key later and any recorded first message opens. That is the price of the round trip these patterns save, and it is the same trade as TLS 1.3 0-RTT early data.',
+    'full': 'This pattern encrypts nothing before the ephemeral-ephemeral DH is mixed in, so everything it protects — handshake payloads and transport messages alike — stays protected even if every static key is stolen later. A pattern opening with a bare `e` has no key yet for a first-message payload, so such a payload goes out in cleartext: visible from the start, but not a forward-secrecy failure.'
   },
   identityHiding: {
-    'none': 'Both static public keys are observable on the wire.',
-    'initiator': 'The initiator\'s static key is encrypted before transmission — passive observers cannot identify the client.',
-    'responder': 'The responder\'s static key is encrypted before transmission — passive observers cannot identify the server.',
-    'both': 'Both static keys are either pre-shared or encrypted — no identities are visible to a network adversary.'
+    'none': 'Both parties send their static public key in cleartext. No pattern in this catalog does.',
+    'initiator': 'The initiator\'s static key never appears in cleartext — pre-shared, absent, or sent encrypted — while the responder\'s does.',
+    'responder': 'The responder\'s static key never appears in cleartext — pre-shared, absent, or sent encrypted — while the initiator\'s is sent in the clear.',
+    'both': 'Neither static key appears in cleartext on the wire. Careful: this rule counts only what a passive observer reads off the wire. It does not mean unlinkable. A pre-shared key is invisible but often still confirmable by an attacker who guesses a candidate, and an encrypted key is not always forward secret. Click a pattern for its per-party Noise §7.8 grade.'
   }
 };
 
