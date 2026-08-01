@@ -1548,6 +1548,21 @@ main {
   border: 1px solid var(--security-none);
 }
 
+/* "Not applicable" and "could not run" are NOT security verdicts, so they must
+   not borrow the pass/fail colours. Deliberately neutral, and distinguished
+   from each other by their border as well as their text. */
+.badge-na {
+  background: var(--hex-bg);
+  color: var(--text-secondary);
+  border: 1px dashed var(--text-secondary);
+}
+
+.badge-error {
+  background: var(--hex-bg);
+  color: var(--text-secondary);
+  border: 1px solid var(--text-secondary);
+}
+
 /* ----- Compare picker + explainer ----- */
 
 .compare-picker {

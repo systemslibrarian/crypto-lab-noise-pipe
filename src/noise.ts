@@ -857,8 +857,28 @@ export async function runFullHandshake(
 
 /* ----- Failure-mode simulations for the "Break it" panel ----- */
 
+/**
+ * What actually happened when an attack was attempted.
+ *
+ * A boolean is not enough here. "The attack was rejected", "the attack does not
+ * apply to this pattern", and "the simulation blew up" are three different
+ * facts, and collapsing the last two into "attack succeeded" inverts the whole
+ * point of a lab about which patterns resist which attacks.
+ */
+export type AttackOutcome =
+  /** The defense worked: the attack was detected or rejected. */
+  | 'held'
+  /** The attack genuinely worked against this pattern. */
+  | 'succeeded'
+  /** This attack is not meaningful against this pattern — nothing was run. */
+  | 'n/a'
+  /** The simulation itself failed. Says nothing about the pattern's security. */
+  | 'error';
+
 export interface FailureResult {
-  /** Did the operation succeed? */
+  /** The three-way (plus error) verdict. This is what the UI renders. */
+  outcome: AttackOutcome;
+  /** Convenience mirror of `outcome === 'held'`. Never use it to render a badge. */
   ok: boolean;
   /** Free-form summary line shown to the user. */
   summary: string;
@@ -886,12 +906,14 @@ export async function simulateBitFlip(
     try {
       await recvCipher.decryptWithAd(EMPTY, tampered);
       return {
+        outcome: 'succeeded',
         ok: false,
         summary: 'Bit-flip went undetected (this should never happen with a correctly implemented AEAD)',
         details: { ciphertext: toHex(ct), tampered: toHex(tampered) }
       };
     } catch (err) {
       return {
+        outcome: 'held',
         ok: true,
         summary: 'AEAD authentication tag detected the tamper — decryption rejected.',
         details: { ciphertext: toHex(ct), tampered: toHex(tampered) },
@@ -899,7 +921,7 @@ export async function simulateBitFlip(
       };
     }
   } catch (err) {
-    return { ok: false, summary: 'Setup error', error: (err as Error).message };
+    return { outcome: 'error', ok: false, summary: 'The simulation itself failed to set up — this says nothing about the pattern\u2019s security.', error: (err as Error).message };
   }
 }
 
@@ -930,6 +952,7 @@ export async function simulateNonceReuse(
     recv.setNonce(startN);
     const pt2 = await recv.decryptWithAd(EMPTY, ct2);
     return {
+      outcome: 'succeeded',
       ok: false, // "ok" here means "no failure observed" — but the leak IS the failure
       summary: 'Both decrypted — but XOR of ciphertexts leaks XOR of plaintexts. GCM\'s confidentiality is destroyed.',
       details: {
@@ -940,7 +963,7 @@ export async function simulateNonceReuse(
       }
     };
   } catch (err) {
-    return { ok: true, summary: 'Encryption refused nonce reuse', error: (err as Error).message };
+    return { outcome: 'held', ok: true, summary: 'Encryption refused nonce reuse', error: (err as Error).message };
   }
 }
 
@@ -962,6 +985,7 @@ export async function simulateRSSwap(
     );
     if (!hasPreKnownRS) {
       return {
+        outcome: 'n/a',
         ok: false,
         summary: `${pattern.name} has no pre-known responder static key — there's nothing to forge out-of-band. Try IK, NK, KK, or XK.`
       };
@@ -996,6 +1020,7 @@ export async function simulateRSSwap(
         }
       }
       return {
+        outcome: 'succeeded',
         ok: false,
         summary: `${pattern.name} accepted the forged responder static key — the handshake completed against an impersonator.`,
         details: {
@@ -1005,6 +1030,7 @@ export async function simulateRSSwap(
       };
     } catch (err) {
       return {
+        outcome: 'held',
         ok: true,
         summary: `${pattern.name} rejected the forged responder static key — the DH chain didn't match and a later decryption failed.`,
         details: {
@@ -1015,7 +1041,7 @@ export async function simulateRSSwap(
       };
     }
   } catch (err) {
-    return { ok: false, summary: 'Setup error', error: (err as Error).message };
+    return { outcome: 'error', ok: false, summary: 'The simulation itself failed to set up — this says nothing about the pattern\u2019s security.', error: (err as Error).message };
   }
 }
 
@@ -1029,7 +1055,7 @@ export async function simulatePSKMismatch(
 ): Promise<FailureResult> {
   try {
     if (!pattern.name.includes('psk')) {
-      return { ok: false, summary: `${pattern.name} has no PSK to mismatch — try IKpsk2.` };
+      return { outcome: 'n/a', ok: false, summary: `${pattern.name} has no PSK to mismatch — there is nothing to make diverge. Try IKpsk2.` };
     }
 
     const iStatic = generateKeyPair();
@@ -1061,6 +1087,7 @@ export async function simulatePSKMismatch(
         }
       }
       return {
+        outcome: 'succeeded',
         ok: false,
         summary: 'Handshake completed despite mismatched PSKs — but transport keys will diverge.',
         details: {
@@ -1070,6 +1097,7 @@ export async function simulatePSKMismatch(
       };
     } catch (err) {
       return {
+        outcome: 'held',
         ok: true,
         summary: 'PSK mismatch caused the handshake to fail — a payload couldn\'t be decrypted under the diverged cipher key.',
         details: {
@@ -1080,7 +1108,7 @@ export async function simulatePSKMismatch(
       };
     }
   } catch (err) {
-    return { ok: false, summary: 'Setup error', error: (err as Error).message };
+    return { outcome: 'error', ok: false, summary: 'The simulation itself failed to set up — this says nothing about the pattern\u2019s security.', error: (err as Error).message };
   }
 }
 
@@ -1094,7 +1122,7 @@ export async function simulateReplay(
 ): Promise<FailureResult> {
   try {
     if (pattern.messages.length === 0 || pattern.messages[0].direction !== '->') {
-      return { ok: false, summary: 'This pattern\'s first message is not initiator-sent — cannot demo replay.' };
+      return { outcome: 'n/a', ok: false, summary: 'This pattern\'s first message is not initiator-sent — there is no message 1 to capture and replay.' };
     }
 
     const needsI = hasStaticKeyRequirement(pattern, true);
@@ -1122,19 +1150,21 @@ export async function simulateReplay(
     try {
       await responder.readMessage(msg1);
       return {
+        outcome: 'succeeded',
         ok: false,
         summary: `${pattern.name} has no built-in replay protection — the fresh responder accepted the replayed message 1. WireGuard adds a TAI64N timestamp inside its encrypted payload to detect this.`,
         details: { replayedBytes: toHex(msg1).slice(0, 64) + '…' }
       };
     } catch (err) {
       return {
+        outcome: 'held',
         ok: true,
         summary: 'Replay rejected (unexpected — Noise core has no replay protection).',
         error: (err as Error).message
       };
     }
   } catch (err) {
-    return { ok: false, summary: 'Setup error', error: (err as Error).message };
+    return { outcome: 'error', ok: false, summary: 'The simulation itself failed to set up — this says nothing about the pattern\u2019s security.', error: (err as Error).message };
   }
 }
 
@@ -1224,6 +1254,7 @@ export async function simulateForwardSecrecy(
 
     const noStatics = !hs.keys.initiatorStatic && !hs.keys.responderStatic;
     return {
+      outcome: ephemeralHeld ? 'held' : 'succeeded',
       ok: ephemeralHeld,
       summary: ephemeralHeld
         ? `Forward secrecy HELD. ${pattern.name}'s session key came from the discarded ephemeral DH${noStatics ? ' (this pattern has no static keys at all)' : ''}. Stealing both static private keys after the fact does NOT decrypt the recorded record — AEAD rejects the static-only key. By contrast, the hypothetical static-only channel below leaks its plaintext to the very same attacker.`
@@ -1236,7 +1267,7 @@ export async function simulateForwardSecrecy(
       }
     };
   } catch (err) {
-    return { ok: false, summary: 'Setup error', error: (err as Error).message };
+    return { outcome: 'error', ok: false, summary: 'The simulation itself failed to set up — this says nothing about the pattern\u2019s security.', error: (err as Error).message };
   }
 }
 

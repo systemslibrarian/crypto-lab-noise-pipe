@@ -1067,20 +1067,35 @@ function setupBreakItPanel(): void {
             break;
           }
           default:
-            r = { ok: false, summary: 'Unknown attack' };
+            r = { outcome: 'error' as const, ok: false, summary: `Unknown attack "${attack}" — nothing was run.` };
         }
       } catch (err) {
-        r = { ok: false, summary: 'Attack threw', error: (err as Error).message };
+        r = {
+          outcome: 'error' as const,
+          ok: false,
+          summary: 'The simulation threw before it could reach a verdict — this says nothing about the pattern’s security.',
+          error: (err as Error).message,
+        };
       }
       renderBreakItResult(result, r);
     });
   });
 }
 
+// Four distinct outcomes, four distinct badges. Collapsing "not applicable" or
+// "the simulation broke" into "attack succeeded" would tell the learner that a
+// pattern fell to an attack that was never even run against it — which inverts
+// the whole point of a panel comparing which patterns resist what.
+const OUTCOME_BADGE: Record<string, string> = {
+  held: '<span class="badge badge-ok">✅ Attack failed — defense held</span>',
+  succeeded: '<span class="badge badge-fail">⚠ Attack succeeded</span>',
+  'n/a': '<span class="badge badge-na">— Not applicable to this pattern</span>',
+  error: '<span class="badge badge-error">✗ Could not run — no verdict</span>',
+};
+
 function renderBreakItResult(el: HTMLElement, r: any): void {
-  const badge = r.ok
-    ? '<span class="badge badge-ok">✅ Defense held</span>'
-    : '<span class="badge badge-fail">⚠ Attack succeeded</span>';
+  // Fall back to 'error', never to a security verdict, if outcome is missing.
+  const badge = OUTCOME_BADGE[r?.outcome as string] ?? OUTCOME_BADGE.error;
   let detailsHtml = '';
   if (r.details) {
     detailsHtml = '<div class="breakit-details">' + Object.entries(r.details).map(([k, v]) =>
