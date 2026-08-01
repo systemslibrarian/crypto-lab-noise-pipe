@@ -83,7 +83,7 @@ const NONCE_LEN = 12; // 96-bit nonce for AES-GCM
 /**
  * Build the 12-byte AES-GCM nonce for Noise counter `n`.
  *
- * Noise spec Section 12.3 (AESGCM): "The 96-bit nonce is formed by encoding
+ * Noise spec Section 12.4 (AESGCM): "The 96-bit nonce is formed by encoding
  * 32 bits of zeros followed by big-endian encoding of n." (ChaChaPoly, by
  * contrast, uses little-endian — this is a cipher-specific detail.) So the
  * layout is: 4 zero bytes || 8-byte big-endian counter. Encoding `n` little-

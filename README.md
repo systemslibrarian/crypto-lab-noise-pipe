@@ -58,7 +58,7 @@ npm run dev
 The handshake is a real, spec-faithful implementation (CipherState / SymmetricState / HandshakeState, PSK, Split, Rekey) — not a mock. To keep it honest, `npm test` runs a Vitest suite that:
 
 - **Cross-checks the full handshake against published Noise test vectors** from the [noise-c](https://github.com/rweather/noise-c) suite (also reproduced verbatim by Rust `snow` and Haskell `cacophony`). For `NN`, `XX`, `KK`, and `IK` it asserts every handshake message's exact wire bytes, the final handshake hash (channel binding), and the post-`Split()` transport ciphertexts — byte for byte.
-- **Anchors the primitives** with known-answer tests: X25519 (RFC 7748 §6.1), HKDF-SHA-256 (RFC 5869 Test Case 1), SHA-256 and AES-256-GCM (NIST) digests, and the AES-GCM nonce encoding (Noise §12.3, big-endian).
+- **Anchors the primitives** with known-answer tests: X25519 (RFC 7748 §6.1), HKDF-SHA-256 (RFC 5869 Test Case 1), SHA-256 and AES-256-GCM (NIST) digests, and the AES-GCM nonce encoding (Noise §12.4, big-endian).
 - **Verifies structural invariants and failure modes** across every advertised pattern: both parties derive matching transport keys, AEAD rejects bit-flips and wrong keys, forged responder static keys are rejected (IK/XK), mismatched PSKs break the handshake, and replayed first messages are (correctly) accepted since core Noise has no replay protection.
 
 These vectors caught a real bug during development: AES-GCM nonces were being encoded little-endian instead of big-endian, which silently corrupted every message after the first keyed one (`n >= 1`). The fix is anchored by the KATs above.
@@ -72,5 +72,7 @@ These vectors caught a real bug during development: AES-GCM nonces were being en
 - [crypto-lab-ssh-handshake](https://systemslibrarian.github.io/crypto-lab-ssh-handshake/) — the SSH transport handshake and TOFU trust model.
 
 ---
+
+*One of 170+ browser demos in the [Crypto Lab](https://crypto-lab.systemslibrarian.dev/) suite.*
 
 *"So whether you eat or drink or whatever you do, do it all for the glory of God." — 1 Corinthians 10:31*

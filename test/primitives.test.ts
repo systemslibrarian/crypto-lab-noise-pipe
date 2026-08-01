@@ -118,7 +118,7 @@ describe('AES-256-GCM', () => {
   });
 });
 
-describe('AES-GCM nonce encoding (Noise spec §12.3)', () => {
+describe('AES-GCM nonce encoding (Noise spec §12.4)', () => {
   // AESGCM uses 4 zero bytes || big-endian 64-bit counter. This is the exact
   // detail that, if implemented little-endian, silently corrupts every message
   // after the first (n>=1) — which the Noise KATs then catch.
