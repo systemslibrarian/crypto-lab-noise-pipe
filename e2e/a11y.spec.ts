@@ -47,10 +47,28 @@ async function scan(page: Page): Promise<void> {
   expect(summary).toEqual([]);
 }
 
+async function textInputBorderRatio(page: Page): Promise<number> {
+  return page.locator('.text-input').first().evaluate((el) => {
+    const rgb = (value: string) => value.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+    const luminance = (parts: number[]) => {
+      const c = parts.map((part) => {
+        const value = part / 255;
+        return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    };
+    const style = getComputedStyle(el);
+    const border = luminance(rgb(style.borderTopColor));
+    const fill = luminance(rgb(style.backgroundColor));
+    return (Math.max(border, fill) + 0.05) / (Math.min(border, fill) + 0.05);
+  });
+}
+
 test('no WCAG A/AA violations in dark theme', async ({ page }) => {
   await page.goto('.');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await revealAll(page);
+  expect(await textInputBorderRatio(page)).toBeGreaterThanOrEqual(3);
   await scan(page);
 });
 
@@ -59,5 +77,6 @@ test('no WCAG A/AA violations in light theme', async ({ page }) => {
   await page.locator('#cl-theme-toggle').click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await revealAll(page);
+  expect(await textInputBorderRatio(page)).toBeGreaterThanOrEqual(3);
   await scan(page);
 });
