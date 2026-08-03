@@ -12,7 +12,11 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? 'list' : [['list'], ['html', { open: 'never' }]],
   webServer: {
-    command: 'npm run preview -- --port 4244 --strictPort',
+    // Build before serving. `preview` only serves whatever is already in
+    // dist/; without the build in front, a failing build leaves the previous
+    // good bundle on disk and the suite passes green against code that no
+    // longer compiles — silently invalidating mutation checks.
+    command: 'npm run build && npm run preview -- --port 4244 --strictPort',
     url: 'http://localhost:4244/crypto-lab-noise-pipe/',
     reuseExistingServer: !process.env.CI,
   },
