@@ -433,6 +433,7 @@ async function selectPattern(name: string): Promise<void> {
 
   updateGuidedPathHighlight(name);
   updateWhatsNewBanner(name);
+  clearBreakItResults();
 
   const info = getPatternInfo(name);
   renderPatternInfo(info);
@@ -945,6 +946,22 @@ function setupTransportLanes(): void {
   const reportErr = (msg: string) => { if (errEl) errEl.textContent = msg; };
   const clearErr = () => { if (errEl) errEl.textContent = ''; };
 
+  // "Decrypted by 🅱" is a claim about one specific run: this ciphertext, under
+  // this key, round-tripped to this plaintext. Leaving it on screen after the
+  // learner edits the plaintext — or after a rekey changes the key it was
+  // produced under — turns it into a claim about inputs that no longer exist.
+  // Retire the readouts the moment either input changes.
+  const clearLane = (dir: 'i-to-r' | 'r-to-i') => {
+    setText(`ct-${dir}`, '');
+    setText(`pt-${dir}`, '');
+  };
+  const bindStaleClear = (inputId: string, dir: 'i-to-r' | 'r-to-i') => {
+    const input = document.getElementById(inputId) as HTMLInputElement | null;
+    input?.addEventListener('input', () => clearLane(dir));
+  };
+  bindStaleClear('msg-i-to-r', 'i-to-r');
+  bindStaleClear('msg-r-to-i', 'r-to-i');
+
   sendI2R?.addEventListener('click', async () => {
     if (!handshakeResult || !cI2R) return;
     clearErr();
@@ -997,7 +1014,8 @@ function setupTransportLanes(): void {
       const newKey = cI2R.k ? toHex(cI2R.k) : '(rotated)';
       const sendEl = document.getElementById('transport-send-key');
       if (sendEl) sendEl.textContent = newKey;
-      reportErr('c₁ rekeyed (k rotated; n keeps incrementing per spec).');
+      clearLane('i-to-r');
+      reportErr('c₁ rekeyed (k rotated; n keeps incrementing per spec). The i→r readout was cleared — it was produced under the old k.');
     } catch (err) {
       reportErr(`Rekey failed: ${(err as Error).message}`);
     }
@@ -1012,7 +1030,8 @@ function setupTransportLanes(): void {
       const newKey = cR2I.k ? toHex(cR2I.k) : '(rotated)';
       const recvEl = document.getElementById('transport-recv-key');
       if (recvEl) recvEl.textContent = newKey;
-      reportErr('c₂ rekeyed (k rotated; n keeps incrementing per spec).');
+      clearLane('r-to-i');
+      reportErr('c₂ rekeyed (k rotated; n keeps incrementing per spec). The r→i readout was cleared — it was produced under the old k.');
     } catch (err) {
       reportErr(`Rekey failed: ${(err as Error).message}`);
     }
@@ -1027,6 +1046,18 @@ function setText(id: string, text: string): void {
 }
 
 // ----- Break it panel (Panel 4) -----
+
+/**
+ * Every Break-it verdict is a verdict about ONE pattern — "IK accepted the
+ * forged static key", "XX rejected it". Switching patterns leaves those badges
+ * describing a run that was never made against the pattern now on screen, which
+ * is the exact inversion the four-badge scheme exists to prevent. Retire them.
+ */
+function clearBreakItResults(): void {
+  document.querySelectorAll<HTMLElement>('.breakit-result').forEach(el => {
+    el.innerHTML = '';
+  });
+}
 
 function setupBreakItPanel(): void {
   document.querySelectorAll<HTMLButtonElement>('.breakit-btn').forEach(btn => {

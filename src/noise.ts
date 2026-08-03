@@ -446,14 +446,20 @@ export class HandshakeState {
     this.messageIndex++;
     const message = concat(...messageBuffer);
 
+    // Split() must run BEFORE the logs are snapshotted: it appends the "Split"
+    // entry carrying the two derived transport keys. Snapshotting first drops
+    // that entry on the floor for every handshake, which is what left the
+    // transport panel rendering its "(derived)" fallback instead of the keys.
+    const cipherStates = this.isComplete() ? await this.symmetricState.split() : undefined;
+
     const result: HandshakeResult = {
       done: this.isComplete(),
       messageBuffer: message,
       stepLogs: this.getLogs()
     };
 
-    if (this.isComplete()) {
-      result.cipherStates = await this.symmetricState.split();
+    if (cipherStates) {
+      result.cipherStates = cipherStates;
     }
 
     return result;
@@ -483,14 +489,18 @@ export class HandshakeState {
 
     this.messageIndex++;
 
+    // See writeMessage(): Split() logs the derived transport keys, so it has to
+    // happen before getLogs() or the entry never reaches the transcript.
+    const cipherStates = this.isComplete() ? await this.symmetricState.split() : undefined;
+
     const result: HandshakeResult = {
       done: this.isComplete(),
       payload,
       stepLogs: this.getLogs()
     };
 
-    if (this.isComplete()) {
-      result.cipherStates = await this.symmetricState.split();
+    if (cipherStates) {
+      result.cipherStates = cipherStates;
     }
 
     return result;
@@ -968,11 +978,28 @@ export async function simulateNonceReuse(
 }
 
 /**
- * Run a handshake where the initiator believes a forged static key is the
- * responder's. For IK/NK the handshake succeeds (mutual auth was never
- * established by anything other than the wrong key) — the responder is
- * impersonated. For XX the handshake fails when the responder's real
- * `s` token cannot be decrypted under the bogus DH-derived key.
+ * Responder-static substitution, run as a real man-in-the-middle.
+ *
+ * The attacker replaces the responder's static public key in the initiator's
+ * out-of-band copy AND holds the matching private key, so the attacker is the
+ * party the initiator ends up talking to. That is what key substitution means:
+ * an impersonation, not a broken connection to the honest server.
+ *
+ * The earlier version of this simulation handed the initiator a forged `rs` but
+ * still ran the handshake against the HONEST responder. Of course that failed —
+ * neither side held a key the other could use — and the panel reported the
+ * failure as "IK rejected the forged responder static key … defense held", i.e.
+ * it told the learner that IK detects substituted static keys. IK cannot. The
+ * whole point of a pre-known `rs` is that the pattern trusts it unconditionally;
+ * the README's own "What Can Go Wrong" says so ("the responder can be fully
+ * impersonated without breaking X25519"), and so does the Break-it card. Two
+ * surfaces, opposite claims. This models the attack, so the pattern answers.
+ *
+ * Expected outcomes: IK / NK / KK / XK complete against the impersonator
+ * (succeeded). IKpsk2 does NOT, because the attacker never learned the PSK —
+ * which is precisely what the psk token buys. Patterns without a pre-known `rs`
+ * (XX, NX, IX …) learn it during the handshake, so there is nothing to forge
+ * out of band: n/a.
  */
 export async function simulateRSSwap(
   pattern: HandshakePattern
@@ -996,47 +1023,71 @@ export async function simulateRSSwap(
 
     const needsI = hasStaticKeyRequirement(pattern, true);
     const iStatic = needsI ? generateKeyPair() : null;
-    const psk = pattern.name.includes('psk') ? crypto.getRandomValues(new Uint8Array(32)) : null;
+    const isPSK = pattern.name.includes('psk');
+    // The honest initiator's PSK. The attacker does not have it and cannot: a
+    // PSK is shared out of band with the real responder only.
+    const psk = isPSK ? crypto.getRandomValues(new Uint8Array(32)) : null;
+    const attackerPSK = isPSK ? crypto.getRandomValues(new Uint8Array(32)) : null;
 
     const initiator = new HandshakeState();
-    const responder = new HandshakeState();
-    let iKnowsRS: Uint8Array | null = attacker.publicKey; // <- SWAPPED
-    let rKnowsRS: Uint8Array | null = null;
+    // The impersonator runs as responder, using the very key the initiator was
+    // tricked into trusting.
+    const impersonator = new HandshakeState();
+    const iKnowsRS: Uint8Array | null = attacker.publicKey; // <- SWAPPED
+    let attackerKnowsIS: Uint8Array | null = null;
     for (const pm of pattern.preMessages) {
-      if (pm.direction === '->' && pm.tokens.includes('s') && iStatic) rKnowsRS = iStatic.publicKey;
+      // Where the pattern pre-shares the initiator's static, it is a public key
+      // the attacker can look up too — it authenticates nothing about the responder.
+      if (pm.direction === '->' && pm.tokens.includes('s') && iStatic) attackerKnowsIS = iStatic.publicKey;
     }
     await initiator.initialize(pattern, true, EMPTY, iStatic, null, iKnowsRS, null, psk);
-    await responder.initialize(pattern, false, EMPTY, realResponder, null, rKnowsRS, null, psk);
+    await impersonator.initialize(pattern, false, EMPTY, attacker, null, attackerKnowsIS, null, attackerPSK);
+
+    const evidence: Record<string, string> = {
+      realResponderRS: toHex(realResponder.publicKey),
+      forgedRS: toHex(attacker.publicKey)
+    };
 
     try {
+      let initiatorCiphers: [CipherState, CipherState] | null = null;
+      let attackerCiphers: [CipherState, CipherState] | null = null;
       for (let i = 0; i < pattern.messages.length; i++) {
         const mp = pattern.messages[i];
         if (mp.direction === '->') {
           const w = await initiator.writeMessage(EMPTY);
-          await responder.readMessage(w.messageBuffer!);
+          const r = await impersonator.readMessage(w.messageBuffer!);
+          if (w.done) initiatorCiphers = w.cipherStates!;
+          if (r.done) attackerCiphers = r.cipherStates!;
         } else {
-          const w = await responder.writeMessage(EMPTY);
-          await initiator.readMessage(w.messageBuffer!);
+          const w = await impersonator.writeMessage(EMPTY);
+          const r = await initiator.readMessage(w.messageBuffer!);
+          if (w.done) attackerCiphers = w.cipherStates!;
+          if (r.done) initiatorCiphers = r.cipherStates!;
         }
+      }
+      // Don't take "the handshake completed" on trust — show that the attacker
+      // and the initiator ended up holding the SAME transport key. That is the
+      // impersonation, spelled out in bytes.
+      const iK = initiatorCiphers?.[0].k;
+      const aK = attackerCiphers?.[0].k;
+      if (iK && aK) {
+        evidence.initiatorTransportKey = toHex(iK);
+        evidence.attackerTransportKey = toHex(aK);
       }
       return {
         outcome: 'succeeded',
         ok: false,
-        summary: `${pattern.name} accepted the forged responder static key — the handshake completed against an impersonator.`,
-        details: {
-          realResponderRS: toHex(realResponder.publicKey),
-          forgedRS: toHex(attacker.publicKey)
-        }
+        summary: `${pattern.name} accepted the forged responder static key — the handshake completed against an impersonator, and the attacker now holds the same transport key as the initiator. A pre-known rs is trusted unconditionally; nothing in the pattern can tell a substituted key from the real one.`,
+        details: evidence
       };
     } catch (err) {
       return {
         outcome: 'held',
         ok: true,
-        summary: `${pattern.name} rejected the forged responder static key — the DH chain didn't match and a later decryption failed.`,
-        details: {
-          realResponderRS: toHex(realResponder.publicKey),
-          forgedRS: toHex(attacker.publicKey)
-        },
+        summary: isPSK
+          ? `${pattern.name} stopped the impersonator — it holds the forged static key but not the pre-shared key, so the two key schedules diverged at the psk token and the handshake could not finish. This is what the psk token buys over plain IK.`
+          : `${pattern.name} stopped the impersonator: a later decryption failed, so the substituted static key did not carry the handshake through.`,
+        details: evidence,
         error: (err as Error).message
       };
     }

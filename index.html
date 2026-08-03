@@ -459,7 +459,7 @@
 
         <div class="breakit-card">
           <h4>2. Swap responder's static key (MitM)</h4>
-          <p>Substitute an attacker's key for the responder's <span class="gl" data-term="rs">rs</span>. <code>IK</code>/<code>NK</code> trust the pre-known key blindly; <code>XX</code> verifies it during the handshake.</p>
+          <p>Substitute an attacker's key for the responder's <span class="gl" data-term="rs">rs</span> — and let the attacker answer with the matching private key. <code>IK</code>/<code>NK</code>/<code>XK</code>/<code>KK</code> trust the pre-known key blindly and finish the handshake with the impersonator; <code>IKpsk2</code> still refuses, because the attacker has no PSK. <code>XX</code>-style patterns learn <span class="gl" data-term="rs">rs</span> in-band, so there is nothing to forge out of band.</p>
           <button class="btn btn-primary breakit-btn" data-attack="rsswap">Run attack</button>
           <div class="breakit-result" data-result="rsswap"></div>
         </div>

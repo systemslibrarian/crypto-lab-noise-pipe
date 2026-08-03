@@ -1,0 +1,526 @@
+import { expect, test as base, type Locator, type Page } from '@playwright/test';
+
+/**
+ * Functional gate: every load-bearing claim this page makes, asserted against
+ * what the browser actually renders.
+ *
+ * The rule throughout is that a claim is checked against a value the page
+ * COMPUTED, not against a string this file hardcodes. Where the page prints the
+ * same fact twice — the pattern's message list and the walkthrough step counter,
+ * the Split log's derived keys and the transport panel's key readout, the
+ * per-segment byte counts and the "N bytes total" line — the two surfaces are
+ * compared to each other. A test that only re-states a literal would survive
+ * the page computing nonsense.
+ */
+
+const test = base.extend<{ page: Page }>({
+  // Any uncaught exception fails the test that provoked it. A page that throws
+  // mid-render can leave a stale verdict on screen and still look green.
+  page: async ({ page }, use) => {
+    const crashes: string[] = [];
+    page.on('pageerror', (err) => crashes.push(String(err)));
+    await use(page);
+    expect(crashes, 'uncaught page exceptions').toEqual([]);
+  },
+});
+
+const PROTOCOL = (name: string) => `Noise_${name}_25519_AESGCM_SHA256`;
+
+async function load(page: Page): Promise<void> {
+  await page.goto('.');
+  await expect(page.locator('#handshake-status')).toHaveText('Handshake complete');
+}
+
+/** Select a pattern by name and wait for its handshake to finish. */
+async function selectPattern(page: Page, name: string): Promise<void> {
+  // The chips live in the Pattern panel; every other panel hides them.
+  await page.locator('#tab-pattern').click();
+  await page.locator('#all-patterns-disclosure').evaluate((el) => {
+    (el as HTMLDetailsElement).open = true;
+  });
+  await page.locator('.pattern-chip', { hasText: new RegExp(`^${name}$`) }).click();
+  await expect(page.locator('#pattern-name')).toHaveText(PROTOCOL(name));
+  await expect(page.locator('#handshake-status')).toHaveText('Handshake complete');
+}
+
+/** How many handshake messages the PATTERN PANEL says this pattern has. */
+async function messageCountFromPatternPanel(page: Page): Promise<number> {
+  const listing = (await page.locator('#pattern-messages').innerText()).split('\n');
+  return listing.filter(
+    (line) => /(->|<-)/.test(line) && !line.includes('(pre-message)')
+  ).length;
+}
+
+/** Read one `key: value` detail row out of a rendered log entry or attack result. */
+async function detail(scope: Locator, key: string): Promise<string | null> {
+  return scope.evaluate((root, wanted) => {
+    for (const row of Array.from(root.querySelectorAll('.detail-row'))) {
+      const k = row.querySelector('.detail-key')?.textContent?.trim().replace(/:$/, '');
+      if (k === wanted) return row.querySelector('.detail-value')?.textContent?.trim() ?? null;
+    }
+    return null;
+  }, key);
+}
+
+async function stepToLastMessage(page: Page): Promise<number> {
+  const next = page.locator('#step-next');
+  let guard = 0;
+  while (await next.isEnabled()) {
+    await next.click();
+    if (++guard > 12) throw new Error('step-next never became disabled');
+  }
+  const counter = await page.locator('#step-counter').textContent();
+  return Number(/of (\d+)/.exec(counter ?? '')?.[1]);
+}
+
+async function runAttack(page: Page, attack: string): Promise<string> {
+  await page.locator(`[data-attack="${attack}"]`).click();
+  const result = page.locator(`[data-result="${attack}"]`);
+  await expect(result.locator('.badge')).toBeVisible();
+  return (await result.innerText()).replace(/\s+/g, ' ');
+}
+
+// ---------------------------------------------------------------------------
+// The headline verdict, cross-checked against the page's own pattern listing
+// ---------------------------------------------------------------------------
+
+test('the handshake completes and the walkthrough agrees with the pattern listing', async ({ page }) => {
+  await load(page);
+
+  for (const name of ['NN', 'NK', 'XX', 'IK', 'IKpsk2']) {
+    await selectPattern(page, name);
+
+    // The pattern panel and the walkthrough are rendered from the same pattern
+    // definition by two different code paths. If they disagree, one of them is
+    // describing a handshake that did not happen.
+    const expected = await messageCountFromPatternPanel(page);
+    expect(expected, `${name} should list at least one handshake message`).toBeGreaterThan(0);
+
+    await page.locator('#tab-walkthrough').click();
+    await expect(page.locator('#step-counter')).toHaveText(`Message 1 of ${expected}`);
+
+    const total = await stepToLastMessage(page);
+    expect(total, `${name} step counter total`).toBe(expected);
+    await expect(page.locator('#step-counter')).toHaveText(`Message ${expected} of ${expected}`);
+
+    await page.locator('#tab-pattern').click();
+  }
+});
+
+test('the step controls stay alive in both directions', async ({ page }) => {
+  await load(page);
+  await selectPattern(page, 'XX');
+  await page.locator('#tab-walkthrough').click();
+
+  const prev = page.locator('#step-prev');
+  const next = page.locator('#step-next');
+
+  await expect(prev).toBeDisabled();
+  await expect(next).toBeEnabled();
+
+  const total = await stepToLastMessage(page);
+  expect(total).toBeGreaterThan(1);
+  await expect(next).toBeDisabled();
+  await expect(prev).toBeEnabled();
+
+  // Walking back must re-arm the forward control — a run that has been played
+  // to the end is not a run that is over.
+  for (let i = 1; i < total; i++) await prev.click();
+  await expect(page.locator('#step-counter')).toHaveText(`Message 1 of ${total}`);
+  await expect(prev).toBeDisabled();
+  await expect(next).toBeEnabled();
+});
+
+// ---------------------------------------------------------------------------
+// Split(): the derived transport keys reach the transport panel
+// ---------------------------------------------------------------------------
+
+test('the transport panel shows the keys the walkthrough says Split derived', async ({ page }) => {
+  // Regression: writeMessage/readMessage used to snapshot their step logs BEFORE
+  // calling split(), so the Split entry — the one carrying the two derived
+  // transport keys — was dropped from every transcript. The walkthrough never
+  // showed a Split step and the transport panel rendered its "(derived)"
+  // fallback instead of the keys, for every pattern.
+  await load(page);
+  await selectPattern(page, 'XX');
+  await page.locator('#tab-walkthrough').click();
+  await stepToLastMessage(page);
+
+  const splitEntry = page
+    .locator('#step-info .log-entry')
+    .filter({ has: page.locator('.log-operation', { hasText: /^Split$/ }) })
+    .first();
+  await expect(splitEntry, 'the final message must log Split()').toBeVisible();
+
+  const loggedSend = await detail(splitEntry, 'sendKey');
+  const loggedRecv = await detail(splitEntry, 'recvKey');
+  expect(loggedSend).toMatch(/^[0-9a-f]{64}$/);
+  expect(loggedRecv).toMatch(/^[0-9a-f]{64}$/);
+  expect(loggedSend).not.toBe(loggedRecv);
+
+  await page.locator('#tab-transport').click();
+  await expect(page.locator('#transport-send-key')).toHaveText(loggedSend!);
+  await expect(page.locator('#transport-recv-key')).toHaveText(loggedRecv!);
+});
+
+// ---------------------------------------------------------------------------
+// Transport: the round trip, and its counters
+// ---------------------------------------------------------------------------
+
+test('transport encrypt/decrypt round-trips and the nonce counts the sends', async ({ page }) => {
+  await load(page);
+  await selectPattern(page, 'IK');
+  await page.locator('#tab-transport').click();
+
+  const plaintext = 'attack at dawn';
+  await page.locator('#msg-i-to-r').fill(plaintext);
+  await page.locator('#send-i-to-r').click();
+
+  // "Decrypted by 🅱" is the receiving CipherState's output, not an echo of the
+  // input box: it only reads back if the AEAD actually verified.
+  await expect(page.locator('#pt-i-to-r')).toHaveText(plaintext);
+
+  // AES-GCM ciphertext = plaintext bytes + a 16-byte tag, in hex.
+  const ct1 = await page.locator('#ct-i-to-r').textContent();
+  expect(ct1).toMatch(/^[0-9a-f]+$/);
+  expect(ct1!.length / 2).toBe(plaintext.length + 16);
+  await expect(page.locator('#i-to-r-nonce')).toHaveText('1');
+
+  // A second send at the next nonce must produce different bytes for identical
+  // plaintext — that is the whole reason the counter exists.
+  await page.locator('#send-i-to-r').click();
+  await expect(page.locator('#i-to-r-nonce')).toHaveText('2');
+  const ct2 = await page.locator('#ct-i-to-r').textContent();
+  expect(ct2).not.toBe(ct1);
+  await expect(page.locator('#pt-i-to-r')).toHaveText(plaintext);
+
+  // The other lane has its own key and its own counter; it must not have moved.
+  await expect(page.locator('#r-to-i-nonce')).toHaveText('0');
+  await page.locator('#msg-r-to-i').fill('roger');
+  await page.locator('#send-r-to-i').click();
+  await expect(page.locator('#pt-r-to-i')).toHaveText('roger');
+  await expect(page.locator('#r-to-i-nonce')).toHaveText('1');
+  await expect(page.locator('#i-to-r-nonce')).toHaveText('2');
+
+  // Reset must return the counters to zero AND leave the controls usable.
+  await page.locator('#reset-transport-btn').click();
+  await expect(page.locator('#i-to-r-nonce')).toHaveText('0');
+  await expect(page.locator('#r-to-i-nonce')).toHaveText('0');
+  await expect(page.locator('#ct-i-to-r')).toHaveText('');
+  await page.locator('#send-i-to-r').click();
+  await expect(page.locator('#pt-i-to-r')).toHaveText(plaintext);
+  await expect(page.locator('#i-to-r-nonce')).toHaveText('1');
+});
+
+test('the transport readout retires when the input it described changes', async ({ page }) => {
+  // Regression: "Decrypted by 🅱" is a claim about one ciphertext under one key.
+  // It used to stay on screen after the learner edited the plaintext, and after
+  // a rekey replaced the key it was produced under.
+  await load(page);
+  await selectPattern(page, 'NN');
+  await page.locator('#tab-transport').click();
+
+  await page.locator('#msg-i-to-r').fill('first');
+  await page.locator('#send-i-to-r').click();
+  await expect(page.locator('#pt-i-to-r')).toHaveText('first');
+
+  await page.locator('#msg-i-to-r').fill('second');
+  await expect(page.locator('#pt-i-to-r')).toHaveText('');
+  await expect(page.locator('#ct-i-to-r')).toHaveText('');
+
+  // Rekey: the displayed key changes, so anything computed under the old one
+  // must go with it, and the status line must say why.
+  await page.locator('#send-i-to-r').click();
+  await expect(page.locator('#pt-i-to-r')).toHaveText('second');
+  const keyBefore = await page.locator('#transport-send-key').textContent();
+  await page.locator('#rekey-i-btn').click();
+  await expect(page.locator('#transport-send-key')).not.toHaveText(keyBefore!);
+  await expect(page.locator('#pt-i-to-r')).toHaveText('');
+  await expect(page.locator('#transport-error')).toContainText('rekeyed');
+  await expect(page.locator('#transport-error')).toContainText('old k');
+
+  // Rekeying one direction must not disturb the other, or kill the controls.
+  await page.locator('#msg-i-to-r').fill('after rekey');
+  await page.locator('#send-i-to-r').click();
+  await expect(page.locator('#pt-i-to-r')).toHaveText('after rekey');
+});
+
+// ---------------------------------------------------------------------------
+// Break it: every failure path reaches a verdict AND names the cause
+// ---------------------------------------------------------------------------
+
+const HELD = 'Attack failed — defense held';
+const SUCCEEDED = 'Attack succeeded';
+const NA = 'Not applicable to this pattern';
+const NO_VERDICT = 'Could not run — no verdict';
+const BADGES = [HELD, SUCCEEDED, NA, NO_VERDICT];
+
+/**
+ * pattern → attack → { badge, cause }. Every cell is a state the panel can
+ * reach; each one must land on the right badge and say why in words a learner
+ * can act on.
+ */
+const ATTACK_MATRIX: Array<{ pattern: string; attack: string; badge: string; cause: RegExp }> = [
+  { pattern: 'NN', attack: 'bitflip', badge: HELD, cause: /authentication tag detected the tamper/i },
+  { pattern: 'NN', attack: 'noncereuse', badge: SUCCEEDED, cause: /XOR of ciphertexts leaks XOR of plaintexts/i },
+  { pattern: 'NN', attack: 'replay', badge: SUCCEEDED, cause: /NN has no built-in replay protection/i },
+  { pattern: 'NN', attack: 'forwardsecrecy', badge: HELD, cause: /Forward secrecy HELD/i },
+  // Nothing was run: these must NOT be dressed up as a security result.
+  { pattern: 'NN', attack: 'rsswap', badge: NA, cause: /NN has no pre-known responder static key/i },
+  { pattern: 'NN', attack: 'pskmismatch', badge: NA, cause: /NN has no PSK to mismatch/i },
+  { pattern: 'XX', attack: 'rsswap', badge: NA, cause: /XX has no pre-known responder static key/i },
+  // A pre-known rs is trusted unconditionally — the impersonator gets in.
+  { pattern: 'IK', attack: 'rsswap', badge: SUCCEEDED, cause: /IK accepted the forged responder static key/i },
+  { pattern: 'NK', attack: 'rsswap', badge: SUCCEEDED, cause: /NK accepted the forged responder static key/i },
+  // …unless a PSK the attacker never had is mixed in.
+  { pattern: 'IKpsk2', attack: 'rsswap', badge: HELD, cause: /not the pre-shared key/i },
+  { pattern: 'IKpsk2', attack: 'pskmismatch', badge: HELD, cause: /PSK mismatch caused the handshake to fail/i },
+];
+
+for (const { pattern, attack, badge, cause } of ATTACK_MATRIX) {
+  test(`break-it: ${pattern} / ${attack} → ${badge}`, async ({ page }) => {
+    await load(page);
+    await selectPattern(page, pattern);
+    await page.locator('#tab-breakit').click();
+    const text = await runAttack(page, attack);
+    expect(text, 'badge').toContain(badge);
+    expect(text, 'the verdict must name its cause').toMatch(cause);
+    // No other badge may appear alongside it.
+    for (const other of BADGES.filter((b) => b !== badge)) {
+      expect(text, `must not also render "${other}"`).not.toContain(other);
+    }
+  });
+}
+
+test('the responder-static swap is an impersonation, demonstrated in bytes', async ({ page }) => {
+  // Regression: this simulation used to hand the initiator a forged rs and then
+  // run the handshake against the HONEST responder. That failed for want of a
+  // matching key on either side, and the panel reported the failure as "IK
+  // rejected the forged responder static key — defense held" — telling the
+  // learner that IK detects substituted static keys, which is the opposite of
+  // what IK does and the opposite of what its own card says.
+  await load(page);
+  await selectPattern(page, 'IK');
+  await page.locator('#tab-breakit').click();
+  await runAttack(page, 'rsswap');
+
+  const scope = page.locator('[data-result="rsswap"]');
+  const real = await detail(scope, 'realResponderRS');
+  const forged = await detail(scope, 'forgedRS');
+  const initiatorKey = await detail(scope, 'initiatorTransportKey');
+  const attackerKey = await detail(scope, 'attackerTransportKey');
+
+  expect(real).toMatch(/^[0-9a-f]{64}$/);
+  expect(forged).toMatch(/^[0-9a-f]{64}$/);
+  expect(forged, 'the substituted key must differ from the real one').not.toBe(real);
+  // The impersonation itself: the attacker ends the handshake holding exactly
+  // the key the initiator believes it shares with the real responder.
+  expect(initiatorKey).toMatch(/^[0-9a-f]{64}$/);
+  expect(attackerKey).toBe(initiatorKey);
+
+  // And IKpsk2, run identically, must never reach a shared transport key.
+  await selectPattern(page, 'IKpsk2');
+  await page.locator('#tab-breakit').click();
+  await runAttack(page, 'rsswap');
+  expect(await detail(scope, 'attackerTransportKey')).toBeNull();
+});
+
+test('the bit-flip result is internally consistent: one byte, one bit', async ({ page }) => {
+  await load(page);
+  await page.locator('#tab-breakit').click();
+  await runAttack(page, 'bitflip');
+
+  const scope = page.locator('[data-result="bitflip"]');
+  const clean = await detail(scope, 'ciphertext');
+  const tampered = await detail(scope, 'tampered');
+  expect(clean).toMatch(/^[0-9a-f]+$/);
+  expect(tampered).toHaveLength(clean!.length);
+
+  const a = Buffer.from(clean!, 'hex');
+  const b = Buffer.from(tampered!, 'hex');
+  const differing = [...a].map((v, i) => v ^ b[i]).map((v, i) => ({ i, v })).filter((d) => d.v !== 0);
+  expect(differing, 'exactly one byte should differ').toHaveLength(1);
+  expect(differing[0].v, 'and by exactly one bit — 0x80').toBe(0x80);
+  expect(differing[0].i, 'the first byte, as the card says').toBe(0);
+});
+
+test('nonce reuse is demonstrated, not asserted: the two XORs agree', async ({ page }) => {
+  // The page computes the leak twice by independent routes — once from the two
+  // ciphertexts an attacker could have recorded, once from the two plaintexts.
+  // If they match, keystream reuse really did expose the plaintext relationship.
+  await load(page);
+  await page.locator('#tab-breakit').click();
+  await runAttack(page, 'noncereuse');
+
+  const scope = page.locator('[data-result="noncereuse"]');
+  const ct1 = await detail(scope, 'ciphertext1');
+  const ct2 = await detail(scope, 'ciphertext2');
+  const ctXor = await detail(scope, 'ciphertextXOR');
+  const ptXor = await detail(scope, 'recoveredXOR');
+
+  expect(ct1).toMatch(/^[0-9a-f]+$/);
+  expect(ct2).not.toBe(ct1);
+  expect(ctXor, 'attacker-side XOR must equal plaintext-side XOR').toBe(ptXor);
+  expect(ctXor, 'a zero XOR would prove nothing').not.toMatch(/^0+$/);
+
+  // Recompute it here rather than trusting either of the page's two numbers.
+  const a = Buffer.from(ct1!, 'hex');
+  const b = Buffer.from(ct2!, 'hex');
+  const n = Buffer.from(ctXor!, 'hex').length;
+  const recomputed = Buffer.from([...a.subarray(0, n)].map((v, i) => v ^ b[i])).toString('hex');
+  expect(recomputed).toBe(ctXor);
+});
+
+test('break-it verdicts retire when the pattern they describe changes', async ({ page }) => {
+  // Regression: "IK accepted the forged responder static key" stayed on screen
+  // after switching to NN, a pattern that attack was never run against.
+  await load(page);
+  await selectPattern(page, 'IK');
+  await page.locator('#tab-breakit').click();
+  expect(await runAttack(page, 'rsswap')).toContain(SUCCEEDED);
+
+  await page.locator('#tab-pattern').click();
+  await selectPattern(page, 'NN');
+  await page.locator('#tab-breakit').click();
+  await expect(page.locator('[data-result="rsswap"]')).toHaveText('');
+  await expect(page.locator('[data-result="rsswap"] .badge')).toHaveCount(0);
+});
+
+// ---------------------------------------------------------------------------
+// The on-the-wire byte view: parts sum to the whole, identity hiding visible
+// ---------------------------------------------------------------------------
+
+test('wire-block segments sum to the message total, on every step', async ({ page }) => {
+  await load(page);
+
+  for (const name of ['NN', 'XX', 'IK', 'IKpsk2']) {
+    await selectPattern(page, name);
+    await page.locator('#tab-walkthrough').click();
+    const total = await messageCountFromPatternPanel(page);
+
+    for (let step = 1; step <= total; step++) {
+      const { parts, whole } = await page.evaluate(() => {
+        const blocks = Array.from(document.querySelectorAll('#wire-blocks .wire-block-bytes'));
+        const parts = blocks.map((b) => Number(/(\d+)/.exec(b.textContent ?? '')?.[1] ?? NaN));
+        const note = document.querySelector('#wire-blocks .wire-blocks-note')?.textContent ?? '';
+        return { parts, whole: Number(/(\d+) bytes total/.exec(note)?.[1] ?? NaN) };
+      });
+      expect(parts.length, `${name} step ${step} should segment the message`).toBeGreaterThan(0);
+      expect(parts.some(Number.isNaN)).toBe(false);
+      expect(Number.isNaN(whole)).toBe(false);
+      expect(
+        parts.reduce((a, b) => a + b, 0),
+        `${name} step ${step}: segment bytes must account for the whole message`
+      ).toBe(whole);
+      if (step < total) await page.locator('#step-next').click();
+    }
+    await page.locator('#tab-pattern').click();
+  }
+});
+
+test('the wire view shows a static key in the clear only when no k exists yet', async ({ page }) => {
+  await load(page);
+
+  // IX sends `-> e, s` first: no DH has run, so the identity rides in cleartext.
+  await selectPattern(page, 'IX');
+  await page.locator('#tab-walkthrough').click();
+  await expect(page.locator('#wire-blocks')).toContainText('🔓');
+  await expect(page.locator('#wire-blocks')).not.toContainText('🔒');
+  await expect(page.locator('.wire-blocks-note')).toContainText('in the clear');
+
+  // XX sends its statics only after `ee` has produced a k, so both are encrypted.
+  await selectPattern(page, 'XX');
+  await page.locator('#tab-walkthrough').click();
+  await page.locator('#step-next').click(); // message 2: <- e, ee, s, es
+  await expect(page.locator('#wire-blocks')).toContainText('🔒');
+  await expect(page.locator('#wire-blocks')).not.toContainText('🔓');
+  await expect(page.locator('.wire-blocks-note')).toContainText('encrypted');
+});
+
+// ---------------------------------------------------------------------------
+// The [hidden] trap, and the banner that used to outlive its pattern
+// ---------------------------------------------------------------------------
+
+test('nothing carrying the hidden attribute is still painted', async ({ page }) => {
+  // Regression: `.whats-new-banner { display: flex }` outranks the UA sheet's
+  // `[hidden] { display: none }`, so `banner.hidden = true` was a silent no-op.
+  await load(page);
+  await selectPattern(page, 'NX'); // not on the guided path — banner must retire
+
+  const leaks = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('[hidden]'))
+      .filter((el) => getComputedStyle(el as HTMLElement).display !== 'none')
+      .map((el) => ({ id: (el as HTMLElement).id, cls: (el as HTMLElement).className.toString() }))
+  );
+  expect(leaks, `elements marked hidden that still render: ${JSON.stringify(leaks)}`).toEqual([]);
+});
+
+test("the what's-new banner describes the pattern on screen, or nothing", async ({ page }) => {
+  await load(page);
+
+  const banner = page.locator('#whats-new-banner');
+  const body = page.locator('#whats-new-text');
+
+  // NN opens the guided path.
+  await expect(banner).toBeVisible();
+  await expect(body).toContainText('Start here');
+
+  await selectPattern(page, 'NK');
+  await expect(banner).toBeVisible();
+  await expect(body).toContainText('New vs NN');
+
+  await selectPattern(page, 'XX');
+  await expect(banner).toBeVisible();
+  await expect(body).toContainText('New vs NK');
+
+  // Off the guided path there is nothing to say — and saying the last pattern's
+  // line instead would be a claim about a pattern the learner has left.
+  await selectPattern(page, 'NX');
+  await expect(banner).toBeHidden();
+
+  await selectPattern(page, 'IKpsk2');
+  await expect(banner).toBeVisible();
+  await expect(body).toContainText('New vs XX');
+});
+
+// ---------------------------------------------------------------------------
+// Comparison panel: what it prints must match the selected pattern's own panel
+// ---------------------------------------------------------------------------
+
+test('the comparison table agrees with each pattern panel about its properties', async ({ page }) => {
+  await load(page);
+
+  // Both surfaces encode the property value in a `security-<value>` class, so
+  // they can be compared without parsing icons out of the visible text.
+  // (`security-value` is the element's own class name, not a value.)
+  for (const name of ['NN', 'XX', 'IK', 'IKpsk2']) {
+    await selectPattern(page, name);
+    const panelValues = await page.locator('#security-properties').evaluate((root) =>
+      Array.from(root.querySelectorAll('.security-value')).map(
+        (el) =>
+          Array.from(el.classList)
+            .filter((c) => c.startsWith('security-') && c !== 'security-value')
+            .map((c) => c.slice('security-'.length))[0] ?? null
+      )
+    );
+    expect(panelValues, `${name}: pattern panel should print three properties`).toHaveLength(3);
+    expect(panelValues.some((v) => v === null)).toBe(false);
+
+    await page.locator('#tab-comparison').click();
+    const tableValues = await page.locator('#comparison-table').evaluate(
+      (root, pattern) =>
+        ['senderAuth', 'forwardSecrecy', 'identityHiding'].map((prop) => {
+          const cell = root.querySelector(`.compare-cell[data-pattern="${pattern}"][data-prop="${prop}"]`);
+          return cell
+            ? Array.from(cell.classList)
+                .filter((c) => c.startsWith('security-'))
+                .map((c) => c.slice('security-'.length))[0] ?? null
+            : null;
+        }),
+      name
+    );
+
+    expect(tableValues, `${name}: comparison table vs pattern panel`).toEqual(panelValues);
+    await page.locator('#tab-pattern').click();
+  }
+});

@@ -105,6 +105,16 @@ html {
   }
 }
 
+/* The UA sheet's `[hidden] { display: none }` loses to ANY author `display` on
+   the same element, regardless of specificity — author styles outrank the UA
+   sheet. `.whats-new-banner` carries `display: flex`, so `banner.hidden = true`
+   was a silent no-op and the banner kept showing the previously-selected
+   pattern's blurb. Make the attribute authoritative. The print sheet's
+   `[role="tabpanel"][hidden]` rule is more specific and still wins there. */
+[hidden] {
+  display: none !important;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
   background-color: var(--bg-primary);

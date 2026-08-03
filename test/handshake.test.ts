@@ -126,18 +126,42 @@ describe('nonce management', () => {
 });
 
 describe('failure-mode simulations behave as documented', () => {
-  it('IK rejects a forged responder static key (impersonation blocked... or exposed)', async () => {
-    // For IK the initiator sends its static encrypted under es=DH(e, rs). With a
-    // forged rs the responder cannot decrypt -> handshake fails. ok=true means
-    // the forgery was rejected.
+  // A substituted `rs` is an IMPERSONATION: the attacker holds the private key
+  // for the key the initiator was tricked into trusting, and answers in the
+  // responder's place. IK has nothing with which to notice. These tests
+  // previously asserted the opposite — see simulateRSSwap's comment.
+  it('IK completes against an impersonator holding a substituted static key', async () => {
     const res = await simulateRSSwap(PATTERNS.IK.pattern);
-    expect(res.ok).toBe(true);
-    expect(res.error).toBeTruthy();
+    expect(res.outcome).toBe('succeeded');
+    expect(res.ok).toBe(false);
+    // Impersonation demonstrated, not asserted: same transport key on both ends.
+    expect(res.details?.initiatorTransportKey).toMatch(/^[0-9a-f]{64}$/);
+    expect(res.details?.attackerTransportKey).toBe(res.details?.initiatorTransportKey);
+    expect(res.details?.forgedRS).not.toBe(res.details?.realResponderRS);
   });
 
-  it('XK rejects a forged responder static key', async () => {
-    const res = await simulateRSSwap(PATTERNS.XK.pattern);
-    expect(res.ok).toBe(true);
+  it('XK and NK likewise complete against an impersonator', async () => {
+    for (const name of ['XK', 'NK'] as const) {
+      const res = await simulateRSSwap(PATTERNS[name].pattern);
+      expect(res.outcome, name).toBe('succeeded');
+      expect(res.details?.attackerTransportKey, name).toBe(res.details?.initiatorTransportKey);
+    }
+  });
+
+  it('IKpsk2 stops the same impersonator, because it lacks the PSK', async () => {
+    const res = await simulateRSSwap(PATTERNS.IKpsk2.pattern);
+    expect(res.outcome).toBe('held');
+    expect(res.summary).toMatch(/pre-shared key/i);
+    expect(res.error).toBeTruthy();
+    // No shared transport key was ever reached.
+    expect(res.details?.attackerTransportKey).toBeUndefined();
+  });
+
+  it('patterns without a pre-known rs report n/a rather than a security verdict', async () => {
+    for (const name of ['XX', 'NX', 'IX'] as const) {
+      const res = await simulateRSSwap(PATTERNS[name].pattern);
+      expect(res.outcome, name).toBe('n/a');
+    }
   });
 
   it('IKpsk2 with mismatched PSKs fails the handshake', async () => {
