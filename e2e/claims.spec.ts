@@ -202,14 +202,66 @@ test('transport encrypt/decrypt round-trips and the nonce counts the sends', asy
   await expect(page.locator('#r-to-i-nonce')).toHaveText('1');
   await expect(page.locator('#i-to-r-nonce')).toHaveText('2');
 
-  // Reset must return the counters to zero AND leave the controls usable.
+  // "New session" must return the counters to zero AND leave the controls
+  // usable — but it may only do so by changing the KEYS. The dedicated test
+  // below is what makes zeroing here legitimate rather than fatal.
+  const keyBeforeReset = await page.locator('#transport-send-key').textContent();
   await page.locator('#reset-transport-btn').click();
   await expect(page.locator('#i-to-r-nonce')).toHaveText('0');
   await expect(page.locator('#r-to-i-nonce')).toHaveText('0');
   await expect(page.locator('#ct-i-to-r')).toHaveText('');
+  await expect(page.locator('#transport-send-key')).not.toHaveText(keyBeforeReset ?? '');
   await page.locator('#send-i-to-r').click();
   await expect(page.locator('#pt-i-to-r')).toHaveText(plaintext);
   await expect(page.locator('#i-to-r-nonce')).toHaveText('1');
+});
+
+test('a new session never replays a (key, nonce) pair', async ({ page }) => {
+  // The catastrophe this lab exists to teach, guarded in the lab itself.
+  //
+  // "Reset" used to call setNonce(0) on the SAME CipherState objects, so
+  // send -> Reset -> send encrypted under an identical (key, nonce) pair. It was
+  // demonstrable in one click: identical plaintext produced BYTE-IDENTICAL
+  // ciphertext across the reset. With AES-GCM that hands an observer the XOR of
+  // the two plaintexts and forfeits the authenticator.
+  //
+  // The old version of the test above asserted the counters returned to zero and
+  // stopped there, so it did not merely miss the bug — it REQUIRED it.
+  await load(page);
+  await selectPattern(page, 'IK');
+  await page.locator('#tab-transport').click();
+
+  const plaintext = 'IDENTICAL PLAINTEXT';
+  await page.locator('#msg-i-to-r').fill(plaintext);
+  await page.locator('#send-i-to-r').click();
+  await expect(page.locator('#i-to-r-nonce')).toHaveText('1');
+  const ctBefore = await page.locator('#ct-i-to-r').textContent();
+  const sendKeyBefore = await page.locator('#transport-send-key').textContent();
+  const recvKeyBefore = await page.locator('#transport-recv-key').textContent();
+  expect(ctBefore).toMatch(/^[0-9a-f]+$/);
+
+  await page.locator('#reset-transport-btn').click();
+  await expect(page.locator('#i-to-r-nonce')).toHaveText('0');
+
+  // Zeroing the counter is only safe because BOTH directions are keyed anew.
+  const sendKeyAfter = await page.locator('#transport-send-key').textContent();
+  const recvKeyAfter = await page.locator('#transport-recv-key').textContent();
+  expect(sendKeyAfter, 'send key must change when the counter rewinds').not.toBe(sendKeyBefore);
+  expect(recvKeyAfter, 'recv key must change when the counter rewinds').not.toBe(recvKeyBefore);
+
+  // The observable consequence: identical plaintext at the identical counter
+  // must NOT reproduce the identical ciphertext.
+  await page.locator('#msg-i-to-r').fill(plaintext);
+  await page.locator('#send-i-to-r').click();
+  await expect(page.locator('#i-to-r-nonce')).toHaveText('1');
+  const ctAfter = await page.locator('#ct-i-to-r').textContent();
+  expect(
+    ctAfter,
+    'same plaintext at the same nonce produced the same bytes — the key was reused',
+  ).not.toBe(ctBefore);
+
+  // And the session still works: the receiver really decrypts it.
+  await expect(page.locator('#pt-i-to-r')).toHaveText(plaintext);
 });
 
 test('the transport readout retires when the input it described changes', async ({ page }) => {

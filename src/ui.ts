@@ -449,7 +449,7 @@ async function selectPattern(name: string): Promise<void> {
     if (statusEl) statusEl.textContent = 'Handshake complete';
     renderPreMessageCard(info.pattern);
     renderHandshakeWalkthrough();
-    resetTransport();
+    bindTransportToNewSession();
   } catch (err) {
     if (statusEl) statusEl.textContent = `Error: ${(err as Error).message}`;
     console.error('Handshake error:', err);
@@ -897,18 +897,31 @@ function renderPartyState(elId: string, before: PartyStateSnapshot, after: Party
 
 // ----- Transport Phase (Panel 3) -----
 
-function resetTransport(): void {
+/**
+ * Bind the transport panel to the cipher states of a session that has JUST been
+ * established, and show its counters at zero.
+ *
+ * Only ever call this immediately after `runFullHandshake()`. Zeroing a counter
+ * is safe here and ONLY here, because the keys are new — a fresh handshake
+ * means fresh ephemerals, so (key, nonce) pairs cannot repeat.
+ *
+ * This function used to be wired to the "Reset" button as well, which was a
+ * catastrophic bug in a lab that teaches exactly this failure. Pressing Reset
+ * called `setNonce(0)` on the SAME CipherState objects — same key — so
+ * send → Reset → send encrypted different plaintext under an identical
+ * (key, nonce) pair. With AES-GCM that leaks the XOR of the two plaintexts and
+ * destroys the authenticator; it is the precise condition the nonce-reuse panel
+ * three sections up warns is fatal. Reset now starts a genuinely new session,
+ * so the counter returns to zero because the KEYS changed, not in spite of them.
+ */
+function bindTransportToNewSession(): void {
   if (!handshakeResult) return;
   // From initiator's perspective: c1 = send (i→r), c2 = recv (r→i).
-  // Reset by deriving fresh cipher states from the same chaining key by re-running split.
-  // Easier: just reset n and use the existing cipher states.
   cI2R = handshakeResult.initiatorCiphers[0];
   cR2I = handshakeResult.initiatorCiphers[1];
-  // Recreate the responder's view too (we use one CipherState pair only — for demo we encrypt with c1 and decrypt with the *responder's* c1 which is the same key).
-  // The responder's [0] is i→r recv key, responder's [1] is r→i send.
-  // For simplicity we'll use initiator's pair for both directions:
-  //   send i→r: initiator's c1.encrypt   /  decrypt with responder's c1 (== initiator's c1 key) — use responder's
-  //   send r→i: responder's c2.encrypt   /  decrypt with initiator's c2
+  // The responder's [0] is the i→r recv key; its [1] is the r→i send key.
+  // These are freshly split states, so their counters are already zero; setting
+  // them explicitly keeps the panel honest if a caller ever rebinds mid-session.
   cI2R.setNonce(0);
   cR2I.setNonce(0);
   handshakeResult.responderCiphers[0].setNonce(0);
@@ -1037,7 +1050,11 @@ function setupTransportLanes(): void {
     }
   });
 
-  resetBtn?.addEventListener('click', resetTransport);
+  // A new session, NOT a rewind: re-running the handshake mints fresh ephemeral
+  // keys, so the counters legitimately start again at zero. Rewinding the nonce
+  // under the existing key would reuse a (key, nonce) pair - see
+  // bindTransportToNewSession() for why that was fatal here.
+  resetBtn?.addEventListener('click', () => { void selectPattern(currentPattern); });
 }
 
 function setText(id: string, text: string): void {
