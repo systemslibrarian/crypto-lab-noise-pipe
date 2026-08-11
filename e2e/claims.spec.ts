@@ -264,6 +264,97 @@ test('a new session never replays a (key, nonce) pair', async ({ page }) => {
   await expect(page.locator('#pt-i-to-r')).toHaveText(plaintext);
 });
 
+test('the displayed nonce counts records, and identical plaintext never repeats bytes', async ({
+  page,
+}) => {
+  // Regression: encryptWithAd read `this.n`, awaited WebCrypto, and only then
+  // incremented, so two overlapping sends sealed two plaintexts under one
+  // (key, nonce) pair — 200 of 200 concurrent pairs, with a byte-identical
+  // keystream prefix. The counter meanwhile showed 2, describing a state the
+  // records were not in.
+  //
+  // The invariant between two rendered things: the number shown in
+  // #i-to-r-nonce must equal the number of records this lane has sealed, and no
+  // two records may ever be byte-identical.
+  await load(page);
+  await selectPattern(page, 'IK');
+  await page.locator('#tab-transport').click();
+
+  const seen: string[] = [];
+  const plaintext = 'IDENTICAL PLAINTEXT';
+  for (let i = 1; i <= 4; i++) {
+    await page.locator('#msg-i-to-r').fill(plaintext);
+    await page.locator('#send-i-to-r').click();
+    await expect(page.locator('#pt-i-to-r')).toHaveText(plaintext);
+    await expect(
+      page.locator('#i-to-r-nonce'),
+      'the counter must equal the number of records sealed',
+    ).toHaveText(String(i));
+    const ct = await page.locator('#ct-i-to-r').textContent();
+    expect(ct).toMatch(/^[0-9a-f]+$/);
+    seen.push(ct!);
+  }
+  expect(seen, 'four sends must have been recorded').toHaveLength(4);
+  expect(
+    new Set(seen).size,
+    'identical plaintext produced identical ciphertext — the nonce repeated',
+  ).toBe(seen.length);
+});
+
+test('two sends fired in one tick cannot share a nonce', async ({ page }) => {
+  // The reachable route to the bug above: a double-clicked send button. Both
+  // handlers ran to their first await before either incremented, so both sealed
+  // under nonce 0. The panel overwrites #ct-i-to-r on each send, so the
+  // collision leaves no trace in the DOM — the only unfoolable witness is the
+  // IV handed to AES-GCM. Record every one and require them to be distinct.
+  await page.addInitScript(() => {
+    const ivs: string[] = [];
+    (window as unknown as { __ivs: string[] }).__ivs = ivs;
+    const subtle = crypto.subtle;
+    const original = subtle.encrypt.bind(subtle);
+    subtle.encrypt = ((alg: AesGcmParams, key: CryptoKey, data: BufferSource) => {
+      if (alg && alg.name === 'AES-GCM' && alg.iv) {
+        ivs.push(Array.from(new Uint8Array(alg.iv as ArrayBuffer)).join(','));
+      }
+      return original(alg, key, data);
+    }) as typeof subtle.encrypt;
+  });
+
+  await load(page);
+  await selectPattern(page, 'IK');
+  await page.locator('#tab-transport').click();
+
+  // Everything before this point (the handshakes) is not under test.
+  const before = await page.evaluate(
+    () => (window as unknown as { __ivs: string[] }).__ivs.length,
+  );
+
+  await page.locator('#msg-i-to-r').fill('IDENTICAL PLAINTEXT');
+  await page.evaluate(() => {
+    const btn = document.getElementById('send-i-to-r') as HTMLButtonElement;
+    btn.click();
+    btn.click();
+  });
+  await expect(page.locator('#pt-i-to-r')).toHaveText('IDENTICAL PLAINTEXT');
+  await page.waitForTimeout(400);
+
+  const sealed = await page.evaluate(
+    (n) => (window as unknown as { __ivs: string[] }).__ivs.slice(n),
+    before,
+  );
+  expect(sealed.length, 'at least one record must have been sealed').toBeGreaterThan(0);
+  expect(
+    new Set(sealed).size,
+    `${sealed.length} records went out under ${new Set(sealed).size} distinct nonces — a repeat is (key, nonce) reuse`,
+  ).toBe(sealed.length);
+
+  // And the counter must account for exactly the records that went out.
+  await expect(
+    page.locator('#i-to-r-nonce'),
+    'the counter must equal the number of records sealed',
+  ).toHaveText(String(sealed.length));
+});
+
 test('the transport readout retires when the input it described changes', async ({ page }) => {
   // Regression: "Decrypted by 🅱" is a claim about one ciphertext under one key.
   // It used to stay on screen after the learner edited the plaintext, and after
@@ -316,7 +407,14 @@ const ATTACK_MATRIX: Array<{ pattern: string; attack: string; badge: string; cau
   { pattern: 'NN', attack: 'bitflip', badge: HELD, cause: /authentication tag detected the tamper/i },
   { pattern: 'NN', attack: 'noncereuse', badge: SUCCEEDED, cause: /XOR of ciphertexts leaks XOR of plaintexts/i },
   { pattern: 'NN', attack: 'replay', badge: SUCCEEDED, cause: /NN has no built-in replay protection/i },
-  { pattern: 'NN', attack: 'forwardsecrecy', badge: HELD, cause: /Forward secrecy HELD/i },
+  // NN owns no static keys, so the "compromise the statics afterwards"
+  // experiment has nothing to compromise and runs zero decryptions. It used to
+  // badge HELD and print "AEAD rejects the static-only key" anyway — crediting
+  // a defense that was never exercised. NN IS forward secret; the summary says
+  // so, and says why this panel is not the thing that proves it.
+  { pattern: 'NN', attack: 'forwardsecrecy', badge: NA, cause: /Nothing was run/i },
+  { pattern: 'XX', attack: 'forwardsecrecy', badge: HELD, cause: /AEAD rejected every one/i },
+  { pattern: 'NK', attack: 'forwardsecrecy', badge: HELD, cause: /AEAD rejected every one/i },
   // Nothing was run: these must NOT be dressed up as a security result.
   { pattern: 'NN', attack: 'rsswap', badge: NA, cause: /NN has no pre-known responder static key/i },
   { pattern: 'NN', attack: 'pskmismatch', badge: NA, cause: /NN has no PSK to mismatch/i },
@@ -436,6 +534,148 @@ test('break-it verdicts retire when the pattern they describe changes', async ({
   await page.locator('#tab-breakit').click();
   await expect(page.locator('[data-result="rsswap"]')).toHaveText('');
   await expect(page.locator('[data-result="rsswap"] .badge')).toHaveCount(0);
+});
+
+test('an attack already in flight cannot repaint the panel after the pattern changes', async ({
+  page,
+}) => {
+  // Regression: clearBreakItResults() wipes the slot on pattern change, but an
+  // attack started a moment earlier finished afterwards and wrote its verdict
+  // into the cleared slot — "IK accepted the forged responder static key"
+  // rendered under the NN heading. Each attack measured 0–8.6 ms, so a human
+  // was unlikely to hit it; nothing bounded it either way.
+  //
+  // Fire the attack and the pattern switch inside one tick, which is the state
+  // the guard exists for.
+  await load(page);
+  await selectPattern(page, 'IK');
+  await page.locator('#tab-breakit').click();
+
+  // Both clicks inside ONE evaluate: no round trip between them, so the attack
+  // is genuinely still in flight when the pattern changes. Anything less and
+  // the attack (7 ms for IK/rsswap) simply finishes first and the test proves
+  // nothing.
+  await page.evaluate(() => {
+    document.querySelector<HTMLElement>('[data-attack="rsswap"]')!.click();
+    (document.getElementById('all-patterns-disclosure') as HTMLDetailsElement).open = true;
+    Array.from(document.querySelectorAll<HTMLElement>('.pattern-chip'))
+      .find((c) => c.textContent?.trim() === 'NN')!
+      .click();
+  });
+  await expect(page.locator('#pattern-name')).toHaveText(PROTOCOL('NN'));
+  await expect(page.locator('#handshake-status')).toHaveText('Handshake complete');
+
+  await page.locator('#tab-breakit').click();
+  // Give any stranded continuation ample time to land if it is going to.
+  await page.waitForTimeout(500);
+  const stranded = await page.locator('[data-result="rsswap"]').innerText();
+  expect(
+    stranded,
+    'a verdict computed against IK must never be painted under NN',
+  ).not.toContain('IK');
+  expect(stranded.trim(), 'the slot must stay empty, not hold a foreign verdict').toBe('');
+});
+
+test('a pattern switched mid-handshake never leaves the previous handshake on screen', async ({
+  page,
+}) => {
+  // Regression: selectPattern() set currentPattern synchronously and then
+  // awaited runFullHandshake(). A SLOWER pattern started FIRST settled LAST and
+  // its result overwrote the newer selection's — measured at 300 of 300 for
+  // XX-then-NN, XK-then-NN and IKpsk2-then-NN when both were started in the same
+  // tick. The page then showed NN's name above XX's handshake, transport keys
+  // and walkthrough.
+  await load(page);
+  await page.locator('#tab-pattern').click();
+  await page.locator('#all-patterns-disclosure').evaluate((el) => {
+    (el as HTMLDetailsElement).open = true;
+  });
+
+  // Click XX (3 messages, the slower handshake) then NN (2 messages) in ONE
+  // tick, so both handshakes are in flight together.
+  await page.evaluate(() => {
+    const chip = (name: string) =>
+      Array.from(document.querySelectorAll<HTMLElement>('.pattern-chip')).find(
+        (c) => c.textContent?.trim() === name,
+      )!;
+    chip('XX').click();
+    chip('NN').click();
+  });
+  await expect(page.locator('#pattern-name')).toHaveText(PROTOCOL('NN'));
+  await expect(page.locator('#handshake-status')).toHaveText('Handshake complete');
+  await page.waitForTimeout(500); // let the losing handshake settle
+
+  // The name says NN. Every rendered value must belong to NN too. NN is two
+  // messages; XX is three — so the walkthrough is the tell.
+  await expect(page.locator('#pattern-name'), 'the label must still say NN').toHaveText(
+    PROTOCOL('NN'),
+  );
+  const listed = await messageCountFromPatternPanel(page);
+  expect(listed, 'NN lists two handshake messages').toBe(2);
+
+  await page.locator('#tab-walkthrough').click();
+  const total = await stepToLastMessage(page);
+  expect(
+    total,
+    'the walkthrough must render NN’s handshake, not the one still in flight',
+  ).toBe(listed);
+});
+
+test('the forward-secrecy verdict reports how many keys it actually tried', async ({ page }) => {
+  // Regression: the panel printed "Stealing both static private keys after the
+  // fact does NOT decrypt the recorded record — AEAD rejects the static-only
+  // key" for all 13 patterns, while 4 of them (NN, NK, KN, IN) attempted no
+  // decryption at all and 3 of them (NK, KN, IN) own exactly ONE static key.
+  // The only e2e test covering this panel ran NN — the one pattern where the
+  // wrong key count was masked by a special case.
+  //
+  // The invariant: the badge and the attempt count must agree, in both
+  // directions, for every pattern the panel can be pointed at.
+  await load(page);
+  const scope = page.locator('[data-result="forwardsecrecy"]');
+  let heldSeen = 0;
+  let naSeen = 0;
+
+  for (const name of ['NN', 'NK', 'KN', 'IN', 'XX', 'IK', 'IKpsk2']) {
+    await selectPattern(page, name);
+    await page.locator('#tab-breakit').click();
+    const text = await runAttack(page, 'forwardsecrecy');
+
+    const tried = await detail(scope, 'candidate keys tried');
+    expect(tried, `${name} must report how many candidate keys it tried`).not.toBeNull();
+    const count = Number(/^(\d+)/.exec(tried!)![1]);
+
+    if (text.includes(HELD)) {
+      expect(count, `${name} badges "held", so it must have rejected something`).toBeGreaterThan(0);
+      expect(text, `${name}`).toContain('AEAD rejected every one');
+      heldSeen++;
+    } else {
+      expect(text, `${name} tried nothing, so it must badge n/a`).toContain(NA);
+      expect(count, `${name} badges n/a, so nothing may have been tried`).toBe(0);
+      expect(text, `${name} ran nothing and may not claim a rejection`).not.toContain(
+        'AEAD rejected',
+      );
+      naSeen++;
+    }
+
+    // And the compromise it describes must match the keys the pattern owns.
+    const holds = await detail(scope, 'attacker holds');
+    expect(holds, `${name} must say what the attacker holds`).toBeTruthy();
+    if (count === 3) {
+      expect(holds, `${name} formed ss+se+es, so it owns two statics`).toContain(
+        'both static private keys',
+      );
+    } else if (count === 1) {
+      expect(holds, `${name} owns one static key — "both" would be a lie`).not.toContain(
+        'both static private keys',
+      );
+      expect(holds, `${name}`).toContain('the only static key this pattern has');
+    }
+    await page.locator('#tab-pattern').click();
+  }
+
+  expect(heldSeen, 'most patterns must reach a real "held" verdict').toBeGreaterThan(0);
+  expect(naSeen, 'NN has no statics, so it must badge n/a').toBeGreaterThan(0);
 });
 
 // ---------------------------------------------------------------------------

@@ -49,6 +49,29 @@ export class CipherState {
   k: Uint8Array | null = null; // 32-byte key or null (empty)
   n: number = 0; // nonce counter
 
+  /**
+   * Serialization queue for every operation that reads-then-writes `n` or `k`.
+   *
+   * WebCrypto is async, so `encryptWithAd` used to read `this.n`, await the
+   * cipher, and only then increment. Two overlapping calls — a double-clicked
+   * send button is enough — both read the SAME counter before either wrote it
+   * back, and AES-GCM encrypted two different plaintexts under one (key, nonce)
+   * pair. That is the exact catastrophe the nonce-reuse panel three tabs over
+   * exists to teach: measured at 200 of 200 concurrent pairs, with the two
+   * ciphertexts sharing a byte-identical keystream prefix.
+   *
+   * Every operation now runs to completion before the next one starts, so the
+   * read-modify-write of `n` is atomic with respect to the other operations.
+   */
+  private chain: Promise<unknown> = Promise.resolve();
+
+  private serialize<T>(op: () => Promise<T>): Promise<T> {
+    // `then(op, op)` so a rejected predecessor does not wedge the queue.
+    const result = this.chain.then(op, op);
+    this.chain = result.catch(() => undefined);
+    return result;
+  }
+
   /** InitializeKey(key) */
   initializeKey(key: Uint8Array | null): void {
     this.k = key;
@@ -69,26 +92,36 @@ export class CipherState {
    * If k is non-empty, encrypt with AES-256-GCM using k, n, ad.
    * If k is empty, return plaintext.
    */
-  async encryptWithAd(ad: Uint8Array, plaintext: Uint8Array): Promise<Uint8Array> {
-    if (!this.k) return plaintext;
-    if (this.n >= MAX_NONCE) throw new Error('Nonce exhaustion — must rekey');
-    const nonce = nonceFromCounter(this.n);
-    const ct = await aesGcmEncrypt(this.k, nonce, plaintext, ad);
-    this.n++;
-    return ct;
+  encryptWithAd(ad: Uint8Array, plaintext: Uint8Array): Promise<Uint8Array> {
+    return this.serialize(async () => {
+      if (!this.k) return plaintext;
+      if (this.n >= MAX_NONCE) throw new Error('Nonce exhaustion — must rekey');
+      // Reserve the counter and the key BEFORE the first await. Skipping a
+      // nonce is harmless; reusing one is fatal, so the reservation is never
+      // rolled back — not even if the cipher below throws.
+      const reserved = this.n;
+      this.n = reserved + 1;
+      const key = this.k;
+      return aesGcmEncrypt(key, nonceFromCounter(reserved), plaintext, ad);
+    });
   }
 
   /**
    * DecryptWithAd(ad, ciphertext)
    * If k is non-empty, decrypt. If k is empty, return ciphertext.
    */
-  async decryptWithAd(ad: Uint8Array, ciphertext: Uint8Array): Promise<Uint8Array> {
-    if (!this.k) return ciphertext;
-    if (this.n >= MAX_NONCE) throw new Error('Nonce exhaustion — must rekey');
-    const nonce = nonceFromCounter(this.n);
-    const pt = await aesGcmDecrypt(this.k, nonce, ciphertext, ad);
-    this.n++;
-    return pt;
+  decryptWithAd(ad: Uint8Array, ciphertext: Uint8Array): Promise<Uint8Array> {
+    return this.serialize(async () => {
+      if (!this.k) return ciphertext;
+      if (this.n >= MAX_NONCE) throw new Error('Nonce exhaustion — must rekey');
+      const nonce = nonceFromCounter(this.n);
+      const pt = await aesGcmDecrypt(this.k, nonce, ciphertext, ad);
+      // Spec §5.1: on an authentication failure `n` is NOT incremented (and the
+      // protocol should be torn down). The increment therefore stays after the
+      // await — which is only safe because `serialize` holds the queue.
+      this.n++;
+      return pt;
+    });
   }
 
   /**
@@ -96,15 +129,17 @@ export class CipherState {
    * Sets k = REKEY(k) where REKEY generates a new key from the old one.
    * Using ENCRYPT(k, maxnonce, zerolen, zeros) as specified.
    */
-  async rekey(): Promise<void> {
-    if (!this.k) throw new Error('Cannot rekey without a key');
-    // Noise spec: REKEY uses nonce = 2^64-1 (maxnonce)
-    // For AESGCM: 4 bytes zeros || 8 bytes 0xFF = all-ones 64-bit counter
-    const maxNonce = new Uint8Array([0,0,0,0, 0xff,0xff,0xff,0xff, 0xff,0xff,0xff,0xff]);
-    const zeros = new Uint8Array(32);
-    const newKeyFull = await aesGcmEncrypt(this.k, maxNonce, zeros, EMPTY);
-    // Take first 32 bytes (discard 16-byte AEAD tag)
-    this.k = newKeyFull.slice(0, 32);
+  rekey(): Promise<void> {
+    return this.serialize(async () => {
+      if (!this.k) throw new Error('Cannot rekey without a key');
+      // Noise spec: REKEY uses nonce = 2^64-1 (maxnonce)
+      // For AESGCM: 4 bytes zeros || 8 bytes 0xFF = all-ones 64-bit counter
+      const maxNonce = new Uint8Array([0,0,0,0, 0xff,0xff,0xff,0xff, 0xff,0xff,0xff,0xff]);
+      const zeros = new Uint8Array(32);
+      const newKeyFull = await aesGcmEncrypt(this.k, maxNonce, zeros, EMPTY);
+      // Take first 32 bytes (discard 16-byte AEAD tag)
+      this.k = newKeyFull.slice(0, 32);
+    });
   }
 }
 
@@ -1227,13 +1262,15 @@ export async function simulateReplay(
  * decrypt later" scenario twice, HONESTLY:
  *
  *  A) Real Noise session key (from the ephemeral DH). An attacker who later
- *     steals BOTH static private keys still cannot decrypt, because the session
- *     key was derived from `ee` (and friends) whose ephemeral PRIVATE keys were
- *     discarded when the handshake ended. Only the ephemeral *public* keys were
- *     ever on the wire. We prove this by handing the attacker everything they
- *     could actually possess — both static private keys and both ephemeral
- *     public keys — and showing the best key they can derive from static-only
- *     material does NOT decrypt the record (AEAD rejects it).
+ *     steals every static private key THIS pattern has still cannot decrypt,
+ *     because the session key was derived from `ee` (and friends) whose
+ *     ephemeral PRIVATE keys were discarded when the handshake ended. Only the
+ *     ephemeral *public* keys were ever on the wire. We prove this by handing
+ *     the attacker everything they could actually possess — the pattern's real
+ *     static private keys plus both ephemeral public keys — enumerating every
+ *     DH they can still form from it, and showing each one derives a key that
+ *     AEAD rejects. The count of attempts is reported, so "held" is always
+ *     backed by at least one executed decryption.
  *
  *  B) A hypothetical static-only exchange (no ephemerals): the session key is
  *     HKDF(DH(s_i, s_r)). The same attacker recomputes DH(s_i_priv, s_r_pub) =
@@ -1263,28 +1300,56 @@ export async function simulateForwardSecrecy(
     // form from static-only material is DH(s_i_priv, s_r_pub). Try to build a
     // key from it exactly the way Split would (HKDF of a chaining key) and
     // attempt to decrypt the harvested record.
-    let ephemeralHeld = false;
-    if (hs.keys.initiatorStatic && hs.keys.responderStatic) {
-      const staticSecret = dh(hs.keys.initiatorStatic, hs.keys.responderStatic.publicKey);
-      const [attemptKey] = await hkdf(new Uint8Array(HASHLEN), staticSecret, 2);
+    // The ephemeral PUBLIC keys were on the wire, so the attacker has them; the
+    // ephemeral PRIVATE keys are gone, so `ee` is out of reach forever. Build
+    // EVERY DH the attacker can still form from the static private keys this
+    // pattern actually owns crossed with the public keys that were observable,
+    // and try each one as a transport key.
+    const last = hs.messageLogs[hs.messageLogs.length - 1];
+    const iEphPub = last?.initiatorStateAfter.e ?? null;   // initiator's e, sent in the clear
+    const rEphPub = last?.initiatorStateAfter.re ?? null;  // responder's e, sent in the clear
+
+    const iStatic = hs.keys.initiatorStatic;
+    const rStatic = hs.keys.responderStatic;
+
+    const candidates: Array<{ label: string; secret: Uint8Array }> = [];
+    if (iStatic && rStatic) {
+      candidates.push({ label: 'ss = DH(s_i, s_r)', secret: dh(iStatic, rStatic.publicKey) });
+    }
+    if (iStatic && rEphPub) {
+      candidates.push({ label: 'se = DH(s_i, e_r)', secret: dh(iStatic, rEphPub) });
+    }
+    if (rStatic && iEphPub) {
+      candidates.push({ label: 'es = DH(s_r, e_i)', secret: dh(rStatic, iEphPub) });
+    }
+
+    // Every candidate must be REJECTED for the verdict to be "held". A pattern
+    // with no static keys yields zero candidates: that is not a demonstration of
+    // forward secrecy, it is the absence of anything to compromise, and the
+    // summary below says so rather than claiming an AEAD rejection that never
+    // ran. This branch used to assert `held` with no decryption attempted at
+    // all, for NN, NK, KN and IN — 4 of the 13 shipped patterns.
+    let decryptedBy: string | null = null;
+    for (const c of candidates) {
+      const [attemptKey] = await hkdf(new Uint8Array(HASHLEN), c.secret, 2);
       const attacker = new CipherState();
       attacker.initializeKey(attemptKey.slice(0, 32));
       try {
         await attacker.decryptWithAd(EMPTY, recordCt);
-        ephemeralHeld = false; // decrypted — would mean NOT forward secret
+        decryptedBy = c.label; // decrypted — would mean NOT forward secret
+        break;
       } catch {
-        ephemeralHeld = true;  // AEAD rejected — statics alone are useless
+        /* AEAD rejected this candidate, as it must */
       }
-    } else {
-      // NN and friends: no static keys exist at all, so "compromising statics"
-      // gives the attacker literally nothing. Forward secrecy holds trivially.
-      ephemeralHeld = true;
     }
+    const ephemeralHeld = decryptedBy === null;
 
     // ---- (B) Hypothetical static-only channel (no ephemerals) ----
-    // Fabricate a minimal static-only key agreement to contrast against.
-    const sI = hs.keys.initiatorStatic ?? generateKeyPair();
-    const sR = hs.keys.responderStatic ?? generateKeyPair();
+    // Fabricate a minimal static-only key agreement to contrast against. Where
+    // the pattern has no static key of its own, one is invented purely to give
+    // the contrast channel something to key on — it is not this pattern's key.
+    const sI = iStatic ?? generateKeyPair();
+    const sR = rStatic ?? generateKeyPair();
     const staticOnlySecret = dh(sI, sR.publicKey);
     const [staticKey] = await hkdf(new Uint8Array(HASHLEN), staticOnlySecret, 2);
     const staticSender = new CipherState();
@@ -1303,17 +1368,45 @@ export async function simulateForwardSecrecy(
       staticRecovered = '(unexpected: static-only decrypt failed)';
     }
 
-    const noStatics = !hs.keys.initiatorStatic && !hs.keys.responderStatic;
+    // Name only the keys this pattern actually has. Saying "both static private
+    // keys" for NK, KN or IN — which own exactly one — describes a compromise
+    // that could not have happened.
+    const compromised =
+      iStatic && rStatic ? 'both static private keys'
+      : iStatic ? "the initiator's static private key (the only static key this pattern has)"
+      : rStatic ? "the responder's static private key (the only static key this pattern has)"
+      : 'no static keys at all — this pattern has none';
+
+    // Zero candidates means zero decryptions were attempted. Badging that
+    // "defense held" would credit a defense that never ran, which is the same
+    // inversion the four-badge scheme exists to prevent (see AttackOutcome).
+    // NN really is forward secret; this experiment simply cannot show it.
+    if (candidates.length === 0) {
+      return {
+        outcome: 'n/a',
+        ok: false,
+        summary: `Nothing was run. This experiment works by compromising static private keys after the session ends, and ${pattern.name} has none — so there is no candidate key to try and no decryption was attempted. ${pattern.name} IS forward secret, for the stronger reason that its session key comes from the ephemeral DH alone; but that is a property of the pattern, not a result this panel measured. The hypothetical static-only channel below shows what an attacker recovers from a protocol that has no ephemerals.`,
+        details: {
+          'recorded ciphertext (real Noise)': toHex(recordCt).slice(0, 48) + '…',
+          'attacker holds': 'nothing useful — this pattern has no static keys to steal',
+          'candidate keys tried': '0',
+          'static-only channel (no ephemerals) plaintext recovered': `"${staticRecovered}"`
+        }
+      };
+    }
+
+    const tried = candidates.map(c => c.label).join(', ');
     return {
       outcome: ephemeralHeld ? 'held' : 'succeeded',
       ok: ephemeralHeld,
       summary: ephemeralHeld
-        ? `Forward secrecy HELD. ${pattern.name}'s session key came from the discarded ephemeral DH${noStatics ? ' (this pattern has no static keys at all)' : ''}. Stealing both static private keys after the fact does NOT decrypt the recorded record — AEAD rejects the static-only key. By contrast, the hypothetical static-only channel below leaks its plaintext to the very same attacker.`
-        : `Forward secrecy FAILED for ${pattern.name} — the recorded record decrypted from static keys alone (this should not happen for a forward-secret pattern).`,
+        ? `Forward secrecy HELD. ${pattern.name}'s session key came from the discarded ephemeral DH. An attacker who later steals ${compromised}, and who kept both ephemeral PUBLIC keys off the wire, can still form ${candidates.length} DH secret${candidates.length === 1 ? '' : 's'} — ${tried}. All ${candidates.length} were derived into a transport key and tried against the recorded record; AEAD rejected every one. The ephemeral PRIVATE keys needed for \`ee\` were discarded when the handshake ended. By contrast, the hypothetical static-only channel below leaks its plaintext to the very same attacker.`
+        : `Forward secrecy FAILED for ${pattern.name} — the recorded record decrypted under a key rebuilt from ${decryptedBy} (this should not happen for a forward-secret pattern).`,
       details: {
         'recorded ciphertext (real Noise)': toHex(recordCt).slice(0, 48) + '…',
-        'attacker holds': noStatics ? 'nothing useful (no static keys exist)' : 'both static private keys + both ephemeral PUBLIC keys',
-        'real-Noise record decrypts from statics?': ephemeralHeld ? 'NO — forward secret' : 'YES — not forward secret',
+        'attacker holds': `${compromised} + both ephemeral PUBLIC keys`,
+        'candidate keys tried': `${candidates.length} (${tried})`,
+        'real-Noise record decrypts from compromised material?': ephemeralHeld ? 'NO — forward secret' : `YES — via ${decryptedBy}`,
         'static-only channel (no ephemerals) plaintext recovered': `"${staticRecovered}"`
       }
     };

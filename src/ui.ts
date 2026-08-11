@@ -421,7 +421,27 @@ function updateWhatsNewBanner(name: string): void {
   }
 }
 
+/**
+ * Monotonic id for "which pattern selection is the current one".
+ *
+ * `selectPattern()` sets `currentPattern` synchronously and then awaits an
+ * async handshake. Two selections started in the same tick always settle in
+ * start order when they cost the same, but a slower pattern started FIRST
+ * settles LAST — measured at 300 of 300 for XX-then-NN, XK-then-NN and
+ * IKpsk2-then-NN — and its result then overwrites the newer one. The page would
+ * show the new pattern's name above the old pattern's handshake, transport keys
+ * and walkthrough. (At a realistic 16 ms gap between clicks it was 0 of 200, so
+ * this is latent rather than everyday — but the window widens with device speed,
+ * and nothing in the code bounded it.)
+ *
+ * Every async continuation below re-checks its generation before touching
+ * global state. Break-it attacks share the counter, so a verdict computed
+ * against one pattern can never be painted under another.
+ */
+let selectionGeneration = 0;
+
 async function selectPattern(name: string): Promise<void> {
+  const myGeneration = ++selectionGeneration;
   currentPattern = name;
   currentStep = 0;
 
@@ -445,12 +465,17 @@ async function selectPattern(name: string): Promise<void> {
   }
 
   try {
-    handshakeResult = await runFullHandshake(info.pattern);
+    const result = await runFullHandshake(info.pattern);
+    // A newer selection has already been made — discard this one entirely
+    // rather than repainting the page with a handshake nobody asked for.
+    if (myGeneration !== selectionGeneration) return;
+    handshakeResult = result;
     if (statusEl) statusEl.textContent = 'Handshake complete';
     renderPreMessageCard(info.pattern);
     renderHandshakeWalkthrough();
     bindTransportToNewSession();
   } catch (err) {
+    if (myGeneration !== selectionGeneration) return;
     if (statusEl) statusEl.textContent = `Error: ${(err as Error).message}`;
     console.error('Handshake error:', err);
   }
@@ -871,7 +896,7 @@ function renderPartyState(elId: string, before: PartyStateSnapshot, after: Party
     <div class="state-track state-track-transcript">
       <p class="state-track-caption">
         <span class="track-dot track-dot-transcript" aria-hidden="true"></span>
-        Transcript — proves nobody tampered
+        Transcript — binds every handshake byte into one fingerprint
       </p>
       <div class="state-row state-h ${hChanged ? 'state-changed' : ''}">
         <span class="state-key"><span class="gl" data-term="h" tabindex="0">h</span></span>
@@ -975,16 +1000,34 @@ function setupTransportLanes(): void {
   bindStaleClear('msg-i-to-r', 'i-to-r');
   bindStaleClear('msg-r-to-i', 'r-to-i');
 
+  // A lane's controls are locked while that lane has an operation in flight.
+  // With CipherState now serializing its own nonce reservation, a double-click
+  // can no longer reuse a (key, nonce) pair — but leaving the button live would
+  // still let a second send land before the first had painted its ciphertext,
+  // showing the learner a counter and a record that came from different clicks.
+  const laneBusy: Record<'i-to-r' | 'r-to-i', boolean> = { 'i-to-r': false, 'r-to-i': false };
+  const setLaneEnabled = (dir: 'i-to-r' | 'r-to-i', enabled: boolean) => {
+    laneBusy[dir] = !enabled;
+    const send = document.getElementById(dir === 'i-to-r' ? 'send-i-to-r' : 'send-r-to-i') as HTMLButtonElement | null;
+    const rekey = document.getElementById(dir === 'i-to-r' ? 'rekey-i-btn' : 'rekey-r-btn') as HTMLButtonElement | null;
+    if (send) send.disabled = !enabled;
+    if (rekey) rekey.disabled = !enabled;
+  };
+
   sendI2R?.addEventListener('click', async () => {
-    if (!handshakeResult || !cI2R) return;
+    if (!handshakeResult || !cI2R || laneBusy['i-to-r']) return;
     clearErr();
     const input = document.getElementById('msg-i-to-r') as HTMLInputElement;
     const msg = input?.value;
     if (!msg) { reportErr('Enter a plaintext to encrypt'); return; }
+    setLaneEnabled('i-to-r', false);
     try {
       const pt = new TextEncoder().encode(msg);
       const ct = await cI2R.encryptWithAd(EMPTY, pt);
-      nI2R++;
+      // The counter shown is the sender's REAL CipherState.n, not a tally kept
+      // alongside it. A parallel variable is a second source of truth that can
+      // disagree with the nonce the record was actually sealed under.
+      nI2R = cI2R.n;
       setText('i-to-r-nonce', String(nI2R));
       setText('ct-i-to-r', toHex(ct));
       const dec = await handshakeResult.responderCiphers[0].decryptWithAd(EMPTY, ct);
@@ -992,20 +1035,24 @@ function setupTransportLanes(): void {
       if (nI2R > 100) reportErr(`Note: rekey before n reaches 2⁶⁴. Current i→r: ${nI2R}`);
     } catch (err) {
       reportErr(`i→r error: ${(err as Error).message}`);
+    } finally {
+      setLaneEnabled('i-to-r', true);
     }
   });
 
   sendR2I?.addEventListener('click', async () => {
-    if (!handshakeResult) return;
+    if (!handshakeResult || laneBusy['r-to-i']) return;
     clearErr();
     const input = document.getElementById('msg-r-to-i') as HTMLInputElement;
     const msg = input?.value;
     if (!msg) { reportErr('Enter a plaintext to encrypt'); return; }
+    setLaneEnabled('r-to-i', false);
     try {
       const pt = new TextEncoder().encode(msg);
       // Responder's send cipher is responderCiphers[1] (r→i)
-      const ct = await handshakeResult.responderCiphers[1].encryptWithAd(EMPTY, pt);
-      nR2I++;
+      const sender = handshakeResult.responderCiphers[1];
+      const ct = await sender.encryptWithAd(EMPTY, pt);
+      nR2I = sender.n;
       setText('r-to-i-nonce', String(nR2I));
       setText('ct-r-to-i', toHex(ct));
       // Initiator's recv cipher is cR2I
@@ -1014,6 +1061,8 @@ function setupTransportLanes(): void {
       if (nR2I > 100) reportErr(`Note: rekey before n reaches 2⁶⁴. Current r→i: ${nR2I}`);
     } catch (err) {
       reportErr(`r→i error: ${(err as Error).message}`);
+    } finally {
+      setLaneEnabled('r-to-i', true);
     }
   });
 
@@ -1082,8 +1131,19 @@ function setupBreakItPanel(): void {
       const attack = btn.dataset.attack;
       const result = document.querySelector<HTMLElement>(`[data-result="${attack}"]`);
       if (!result || !handshakeResult) return;
+      // The verdict about to be computed belongs to THIS pattern. Switching
+      // patterns calls clearBreakItResults(), but an attack already in flight
+      // used to finish afterwards and repaint the cleared slot with a verdict
+      // about a pattern no longer on screen. Measured window: 0–8.6 ms per
+      // attack across the shipped patterns, so a human is unlikely to hit it —
+      // but nothing prevented it, and "IK accepted the forged responder static
+      // key" sitting under the XX heading is precisely the inversion this
+      // panel's four-badge scheme exists to stop.
+      const myGeneration = selectionGeneration;
+      const myPattern = currentPattern;
+      btn.disabled = true;
       result.innerHTML = '<em>Running…</em>';
-      const info = getPatternInfo(currentPattern);
+      const info = getPatternInfo(myPattern);
       let r;
       try {
         switch (attack) {
@@ -1124,7 +1184,10 @@ function setupBreakItPanel(): void {
           summary: 'The simulation threw before it could reach a verdict — this says nothing about the pattern’s security.',
           error: (err as Error).message,
         };
+      } finally {
+        btn.disabled = false;
       }
+      if (myGeneration !== selectionGeneration || myPattern !== currentPattern) return;
       renderBreakItResult(result, r);
     });
   });
