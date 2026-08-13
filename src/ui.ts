@@ -1077,7 +1077,7 @@ function setupTransportLanes(): void {
       const sendEl = document.getElementById('transport-send-key');
       if (sendEl) sendEl.textContent = newKey;
       clearLane('i-to-r');
-      reportErr('c₁ rekeyed (k rotated; n keeps incrementing per spec). The i→r readout was cleared — it was produced under the old k.');
+      reportErr('c₁ rekeyed (k rotated; n keeps incrementing per spec). The i→r readout was cleared — it was produced under the old k. Note: REKEY only changes a local key; this demo rotates both ends together, but a real application must coordinate when each side rekeys.');
     } catch (err) {
       reportErr(`Rekey failed: ${(err as Error).message}`);
     }
@@ -1093,7 +1093,7 @@ function setupTransportLanes(): void {
       const recvEl = document.getElementById('transport-recv-key');
       if (recvEl) recvEl.textContent = newKey;
       clearLane('r-to-i');
-      reportErr('c₂ rekeyed (k rotated; n keeps incrementing per spec). The r→i readout was cleared — it was produced under the old k.');
+      reportErr('c₂ rekeyed (k rotated; n keeps incrementing per spec). The r→i readout was cleared — it was produced under the old k. Note: REKEY only changes a local key; this demo rotates both ends together, but a real application must coordinate when each side rekeys.');
     } catch (err) {
       reportErr(`Rekey failed: ${(err as Error).message}`);
     }
@@ -1444,6 +1444,7 @@ function setupExportTranscript(): void {
     if (!handshakeResult) return;
     const info = getPatternInfo(currentPattern);
     const transcript = {
+      _warning: 'TEACHING EXPORT - this file contains the demo session\'s private keys, PSK, chaining keys and transport keys. Anyone holding it can impersonate both parties and decrypt the demonstrated session. A real Noise implementation must never log, export or share this state.',
       protocol: `Noise_${info.pattern.name}_25519_AESGCM_SHA256`,
       pattern: {
         name: info.pattern.name,

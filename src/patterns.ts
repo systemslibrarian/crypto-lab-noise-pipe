@@ -219,9 +219,11 @@ const IKpsk2: HandshakePattern = {
 //             encrypts its FIRST message payload before `ee` fires, using only
 //             `es` (and `ss`). The spec grades that payload destination 2 —
 //             "encryption to a known recipient, forward secrecy for sender
-//             compromise only". Transport keys are still fully forward secret;
-//             the first-message payload is not. This is exactly the 0-RTT-style
-//             trade-off, and it applies to NK, KK, XK, IK and IKpsk2.
+//             compromise only". Transport keys are still forward secret (with
+//             the spec's §7.7 responder caveat for K*/I* patterns, noted in the
+//             explanations below); the first-message payload is not. This is
+//             exactly the 0-RTT-style trade-off, and it applies to NK, KK, XK,
+//             IK and IKpsk2.
 //   'none'    no ephemeral DH at all. No pattern here is in this class.
 //
 // identityHiding — the rule is: a party's static public key counts as HIDDEN
@@ -240,7 +242,7 @@ export const PATTERNS: Record<string, PatternInfo> = {
     pattern: NN,
     security: { senderAuth: 'none', forwardSecrecy: 'full', identityHiding: 'both' },
     description: 'No authentication. Anonymous ephemeral DH. Forward secret but no identity verification.',
-    realWorld: 'Early QUIC drafts, anonymous tunneling',
+    realWorld: 'Anonymous tunneling, opportunistic encryption',
     vsTLS: 'TLS has no equivalent — anonymous cipher suites were removed in TLS 1.3. Noise lets you pick anonymity by design.',
     specNotes: {
       identityHiding: 'Neither party has a static key in this pattern, so there is no identity to leak — hidden by absence, not by protection. Spec §7.8 marks both parties "-".'
@@ -284,7 +286,7 @@ export const PATTERNS: Record<string, PatternInfo> = {
     realWorld: 'Peer-to-peer with pre-shared identity keys',
     vsTLS: 'Like mutual-TLS with pinned certs, but zero bytes of identity flow over the wire — both keys are pre-shared.',
     specNotes: {
-      forwardSecrecy: 'Message 1 is `e, es, ss`: its payload is encrypted using the two parties\' static keys before `ee` runs, so it is graded destination 2. Compromising either static key later decrypts a recorded first-message payload. Transport keys remain fully forward secret.',
+      forwardSecrecy: 'Message 1 is `e, es, ss`: its payload is encrypted using the two parties\' static keys before `ee` runs, so it is graded destination 2. Compromising either static key later decrypts a recorded first-message payload. Transport keys are forward secret, with the spec §7.7 caveat for patterns starting with K: the responder is guaranteed only weak forward secrecy for the transport messages it sends until it receives a transport message from the initiator.',
       identityHiding: 'Both static keys are pre-shared and neither is transmitted. Spec §7.8 grades both parties 5 — a passive attacker can still test a candidate (responder private key, initiator public key) pair against a recorded run.'
     }
   },
@@ -346,7 +348,7 @@ export const PATTERNS: Record<string, PatternInfo> = {
     realWorld: 'Low-latency encrypted channels, basis for WireGuard\'s IKpsk2',
     vsTLS: 'Like TLS 1.3 0-RTT with mTLS — but Noise makes the responder-key requirement explicit; no fallback to weaker auth.',
     specNotes: {
-      forwardSecrecy: 'Message 1 is `e, es, s, ss`: the initiator\'s static key AND the payload are encrypted before `ee` runs, graded destination 2. Anyone who later steals the responder\'s static key can decrypt a recorded first message — payload and initiator identity both. This is the same 0-RTT trade TLS 1.3 early data makes. Transport keys are fully forward secret.',
+      forwardSecrecy: 'Message 1 is `e, es, s, ss`: the initiator\'s static key AND the payload are encrypted before `ee` runs, graded destination 2. Anyone who later steals the responder\'s static key can decrypt a recorded first message — payload and initiator identity both. This is the same 0-RTT trade TLS 1.3 early data makes. Transport keys are forward secret, with the spec §7.7 caveat for patterns starting with I: the responder is guaranteed only weak forward secrecy for the transport messages it sends until it receives a transport message from the initiator.',
       identityHiding: 'The initiator\'s static key is encrypted, but only to the responder\'s static key — spec §7.8 grade 4, encrypted WITHOUT forward secrecy. The responder\'s is pre-shared, graded 3. So "hidden" here means hidden from a passive attacker today, not from one who compromises the responder tomorrow.'
     }
   },
@@ -367,7 +369,7 @@ export const PATTERNS: Record<string, PatternInfo> = {
     realWorld: 'WireGuard VPN (Donenfeld, 2017)',
     vsTLS: 'TLS 1.3 also has a PSK mode, and RFC 8446 §2.2 supports both externally provisioned PSKs and PSKs established by a previous connection (resumption) — the difference is emphasis, not capability: Noise IKpsk2 treats the PSK as a primary post-quantum hedge alongside ECDH, where TLS deployments overwhelmingly use it for resumption.',
     specNotes: {
-      forwardSecrecy: 'Inherits IK\'s message-1 exposure: `e, es, s, ss` encrypts the initiator\'s static key and payload before `ee`, graded destination 2. The `psk` token lands in message 2 (that is what the "2" in IKpsk2 means), so it does not protect message 1 either. Transport keys are fully forward secret, and the PSK does make them resistant to an attacker who breaks X25519.',
+      forwardSecrecy: 'Inherits IK\'s message-1 exposure: `e, es, s, ss` encrypts the initiator\'s static key and payload before `ee`, graded destination 2. The `psk` token lands in message 2 (that is what the "2" in IKpsk2 means), so it does not protect message 1 either. Transport keys are forward secret (with the same §7.7 caveat as IK: the responder gets only weak forward secrecy for its transport messages until an initiator transport message arrives), and the PSK does make them resistant to an attacker who breaks X25519.',
       identityHiding: 'Same as IK — spec §7.8 grade 4 for the initiator (encrypted to the responder\'s static key, no forward secrecy) and 3 for the responder. WireGuard layers its own cookie and load-hiding mechanisms on top; the pattern alone does not hide the initiator from a future responder-key compromise.'
     }
   }
@@ -383,8 +385,8 @@ export const PROPERTY_EXPLANATIONS: Record<string, Record<string, string>> = {
   },
   forwardSecrecy: {
     'none': 'No ephemeral DH at all — every recorded session is decryptable once a static key leaks.',
-    'partial': 'Transport keys are fully forward secret, but this pattern pre-shares the responder\'s static key and so encrypts its FIRST message payload before the ephemeral-ephemeral DH runs, using only `es` (and `ss`). The Noise spec grades that payload destination 2 — "forward secrecy for sender compromise only". Steal the responder\'s static key later and any recorded first message opens. That is the price of the round trip these patterns save, and it is the same trade as TLS 1.3 0-RTT early data.',
-    'full': 'This pattern encrypts nothing before the ephemeral-ephemeral DH is mixed in, so everything it protects — handshake payloads and transport messages alike — stays protected even if every static key is stolen later. A pattern opening with a bare `e` has no key yet for a first-message payload, so such a payload goes out in cleartext: visible from the start, but not a forward-secrecy failure.'
+    'partial': 'Transport keys are forward secret, but this pattern pre-shares the responder\'s static key and so encrypts its FIRST message payload before the ephemeral-ephemeral DH runs, using only `es` (and `ss`). The Noise spec grades that payload destination 2 — "forward secrecy for sender compromise only". Steal the responder\'s static key later and any recorded first message opens. That is the price of the round trip these patterns save, and it is the same trade as TLS 1.3 0-RTT early data. One directional caveat survives into transport (spec §7.7): in patterns starting with K or I, the responder is guaranteed only weak forward secrecy for the transport messages it sends until it receives a transport message from the initiator.',
+    'full': 'This pattern encrypts nothing before the ephemeral-ephemeral DH is mixed in, so everything it protects — handshake payloads and transport messages alike — stays protected even if every static key is stolen later. A pattern opening with a bare `e` has no key yet for a first-message payload, so such a payload goes out in cleartext: visible from the start, but not a forward-secrecy failure. Even here the spec adds one directional caveat (§7.7): in patterns starting with K or I, the responder is guaranteed only weak forward secrecy for the transport messages it sends until it receives a transport message from the initiator.'
   },
   identityHiding: {
     'none': 'Both parties send their static public key in cleartext. No pattern in this catalog does.',

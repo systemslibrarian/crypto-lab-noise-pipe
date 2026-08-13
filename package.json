@@ -8,9 +8,11 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "deploy": "vite build && gh-pages -d dist",
+    "deploy": "npm run build && gh-pages -d dist",
     "test": "vitest run",
-    "test:a11y": "playwright test"
+    "test:e2e": "playwright test",
+    "test:claims": "playwright test e2e/claims.spec.ts",
+    "test:a11y": "playwright test e2e/a11y.spec.ts"
   },
   "dependencies": {
     "@noble/curves": "^1.8.1"

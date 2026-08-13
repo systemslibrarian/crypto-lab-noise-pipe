@@ -1116,11 +1116,25 @@ export async function simulateRSSwap(
         details: evidence
       };
     } catch (err) {
+      // "Held" must not read as total protection. The psk token fires only at
+      // message 2 (that is the "2" in psk2), so by the time the key schedules
+      // diverge the impersonator has already processed message 1 with the
+      // forged key. What it learned there is not asserted by assumption — it is
+      // read back out of the impersonator's own state: if it decrypted the
+      // initiator's static key, that identity (and any first-message payload)
+      // was exposed before the PSK could matter.
+      const stolenIS = impersonator.getRemoteStatic();
+      const msg1IdentityExposed = isPSK && stolenIS !== null && iStatic !== null &&
+        toHex(stolenIS) === toHex(iStatic.publicKey);
+      if (msg1IdentityExposed) {
+        evidence.initiatorStaticPub = toHex(iStatic!.publicKey);
+        evidence.recoveredByAttackerFromMsg1 = toHex(stolenIS!);
+      }
       return {
         outcome: 'held',
         ok: true,
         summary: isPSK
-          ? `${pattern.name} stopped the impersonator — it holds the forged static key but not the pre-shared key, so the two key schedules diverged at the psk token and the handshake could not finish. This is what the psk token buys over plain IK.`
+          ? `${pattern.name} stopped the impersonator from completing the session — it holds the forged static key but not the pre-shared key, so the two key schedules diverged at the psk token and the handshake could not finish. That is what the psk token buys over plain IK. But the psk token arrives only in message 2${msg1IdentityExposed ? ', and the attacker had already processed message 1: it decrypted the initiator’s static identity (shown below) and would have read any first-message payload' : ''}. The PSK protects the transport session, not message 1.`
           : `${pattern.name} stopped the impersonator: a later decryption failed, so the substituted static key did not carry the handshake through.`,
         details: evidence,
         error: (err as Error).message

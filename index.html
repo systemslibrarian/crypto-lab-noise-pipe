@@ -165,7 +165,7 @@
     </div>
     <aside class="cl-hero-why" aria-label="Why it matters">
       <span class="cl-hero-why-label">WHY IT MATTERS</span>
-      <p class="cl-hero-why-text">Noise underpins WireGuard, the Lightning Network, and WhatsApp's transport layer — real channels where one wrong pattern choice silently drops authentication or forward secrecy. There is no negotiation, no downgrade path, and no certificate authority to fall back on.</p>
+      <p class="cl-hero-why-text">Noise underpins WireGuard, the Lightning Network, and WhatsApp's transport layer — real channels where one wrong pattern choice silently drops authentication or forward secrecy. There is no in-protocol negotiation to downgrade and no certificate authority — the pattern is fixed before the first byte, and trusting the keys themselves stays the application's job.</p>
     </aside>
   </header>
 
@@ -256,8 +256,8 @@
     <section id="panel-walkthrough" role="tabpanel" aria-labelledby="tab-walkthrough" hidden>
       <div class="walkthrough-header">
         <h2>Handshake Walkthrough</h2>
-        <button id="export-transcript-btn" class="btn btn-secondary" type="button" aria-label="Download transcript as JSON">
-          ⬇ Export transcript (JSON)
+        <button id="export-transcript-btn" class="btn btn-secondary" type="button" aria-label="Download full session state as JSON, including private keys and session secrets" title="This teaching export contains the session's private keys, PSK, chaining keys and transport keys — it is not a shareable public transcript.">
+          ⬇ Export session state (JSON, includes secrets)
         </button>
       </div>
       <p>Step through each handshake message to see DH operations, key evolution, and hash updates.</p>

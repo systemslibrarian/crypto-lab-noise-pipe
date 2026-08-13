@@ -475,6 +475,27 @@ test('the responder-static swap is an impersonation, demonstrated in bytes', asy
   expect(await detail(scope, 'attackerTransportKey')).toBeNull();
 });
 
+test('IKpsk2 rsswap: "held" still reports the message-1 identity exposure, in bytes', async ({ page }) => {
+  // The psk token lands only in message 2, so the impersonator holding the
+  // forged responder key has already processed message 1 — decrypting the
+  // initiator's static identity and any first-message payload — before the PSK
+  // stops it. "Defense held" must not read as total protection: the verdict
+  // names the exposure, and the evidence shows the exact bytes the attacker
+  // recovered, which must equal the honest initiator's static public key.
+  await load(page);
+  await selectPattern(page, 'IKpsk2');
+  await page.locator('#tab-breakit').click();
+  const text = await runAttack(page, 'rsswap');
+  expect(text).toContain(HELD);
+  expect(text, 'the verdict must scope what the PSK did NOT protect').toMatch(/message 1/i);
+
+  const scope = page.locator('[data-result="rsswap"]');
+  const initiatorStatic = await detail(scope, 'initiatorStaticPub');
+  const recovered = await detail(scope, 'recoveredByAttackerFromMsg1');
+  expect(initiatorStatic).toMatch(/^[0-9a-f]{64}$/);
+  expect(recovered, 'the attacker read the initiator identity out of message 1').toBe(initiatorStatic);
+});
+
 test('the bit-flip result is internally consistent: one byte, one bit', async ({ page }) => {
   await load(page);
   await page.locator('#tab-breakit').click();

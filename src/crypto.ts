@@ -160,7 +160,12 @@ export function fromHex(hex: string): Uint8Array {
   return bytes;
 }
 
-/** Constant-time comparison */
+/**
+ * Best-effort full-length comparison without an intentional early exit.
+ * JavaScript engines and JITs provide no constant-time guarantee, so this must
+ * not be relied on as a side-channel defense in production code — it only
+ * avoids the obvious position-dependent exit a naive loop would have.
+ */
 export function equal(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;
