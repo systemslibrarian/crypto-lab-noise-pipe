@@ -121,7 +121,14 @@ body {
   color: var(--text-primary);
   line-height: 1.6;
   min-height: 100vh;
-  overflow-x: hidden;
+  /* No `overflow-x: hidden` here. `overflow` on <body> PROPAGATES to the
+     viewport, so it does not make wide content fit — it CLIPS whatever does
+     not, and clipped content is unreachable rather than merely awkward, which
+     under WCAG 1.4.10 is the worse of the two outcomes.
+     It also makes reflow unfalsifiable: with it set,
+     `documentElement.scrollWidth === clientWidth` no matter how wide the
+     content really is, so any overflow check passes by construction. Measured
+     at 380px with it in place: 380 === 380, reporting no overflow. */
 }
 
 a {
@@ -837,7 +844,13 @@ main {
 .btn-secondary {
   background: var(--bg-tertiary);
   color: var(--text-primary);
-  border-color: var(--border-color);
+  /* --control-border, not --border-color. `--bg-tertiary` sits within ~1.1:1 of
+     the surface behind it, so this border is the only thing saying a control is
+     here — the case SC 1.4.11 covers. `--border-color` is the surface-divider
+     token: measured 1.25:1 against the button's own fill and 1.55:1 (dark) /
+     1.45:1 (light) against the surround. The palette already defined
+     --control-border in BOTH themes and had used it in exactly one rule. */
+  border-color: var(--control-border);
 }
 
 .btn-secondary:hover:not(:disabled) {
@@ -2250,7 +2263,9 @@ main {
 .predict-choice {
   min-height: 40px;
   padding: 0.4rem 0.75rem;
-  border: 2px solid var(--border-color);
+  /* Same reason as .btn-secondary — the prediction choices are controls whose
+     fill barely differs from the card, so the border carries them. */
+  border: 2px solid var(--control-border);
   border-radius: 8px;
   background: var(--bg-tertiary);
   color: var(--text-primary);
