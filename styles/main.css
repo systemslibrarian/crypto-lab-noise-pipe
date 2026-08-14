@@ -409,7 +409,12 @@ main {
   min-width: 44px;
   min-height: 44px;
   padding: 0.5rem 0.875rem;
-  border: 2px solid var(--border-color);
+  /* --control-border, not --border-color, here and on every other
+     --bg-tertiary-filled control (.compare-chip, .guided-path-step,
+     .anatomy-token-btn, .role-btn): the fill sits ~1.1:1 off the card behind
+     it, so the border is the control's only visible edge, and the divider
+     token measured 1.33:1 against the surround — see the .btn-secondary note. */
+  border: 2px solid var(--control-border);
   border-radius: 8px;
   background: var(--bg-tertiary);
   color: var(--text-primary);
@@ -838,7 +843,14 @@ main {
 }
 
 .btn-primary:hover:not(:disabled) {
-  opacity: 0.9;
+  /* Not `opacity: .9` — fading the whole button composited its white label
+     to 4.33:1 mid-hover. Darkening the fill keeps the label at >=5.7:1. */
+  background-color: #0860c4;
+  border-color: #0860c4;
+}
+[data-theme="dark"] .btn-primary:hover:not(:disabled) {
+  background-color: #38699f; /* white on this: 5.69:1 */
+  border-color: #38699f;
 }
 
 .btn-secondary {
@@ -1249,7 +1261,9 @@ main {
 
 .diagram-size {
   font-size: 10px;
-  fill: var(--text-muted);
+  /* --text-secondary, not --text-muted: this 10px SVG label measured 3.77:1
+     against the diagram surface, and axe never sees SVG fill at all. */
+  fill: var(--text-secondary);
 }
 
 .diagram-animate line[marker-end] {
@@ -1365,8 +1379,23 @@ main {
   transition: background 0.3s;
 }
 
-.state-row.state-absent {
-  opacity: 0.45;
+.state-row.state-absent .state-key,
+.state-row.state-absent .state-key .gl {
+  /* Dimmed with explicit AA ink, not `opacity: .45` — the fade composited
+     the key label to 2.42:1 and the "not held" value to 2.17:1 (dark) /
+     1.85:1 (light) on the party card. These are the dimmest tones that still
+     clear 4.5:1 there, so absent rows stay visibly quieter than held ones. */
+  color: #6a90bf; /* 5.23:1 on the dark card */
+}
+.state-row.state-absent .state-val {
+  color: #7e858f; /* 4.64:1 on the dark card */
+}
+[data-theme="light"] .state-row.state-absent .state-key,
+[data-theme="light"] .state-row.state-absent .state-key .gl {
+  color: #527099; /* 4.77:1 on the light card */
+}
+[data-theme="light"] .state-row.state-absent .state-val {
+  color: #6c737b; /* 4.51:1 on the light card */
 }
 
 .state-row.state-changed {
@@ -1412,7 +1441,8 @@ main {
   cursor: pointer;
   font-size: 0.8125rem;
   padding: 0 0.25rem;
-  color: var(--text-muted);
+  /* --text-secondary, not --text-muted: 3.77:1 on the log-entry surface. */
+  color: var(--text-secondary);
   border-radius: 3px;
 }
 
@@ -1426,7 +1456,10 @@ main {
 .nonce-pill {
   margin-top: 0.375rem;
   font-size: 0.75rem;
-  color: var(--text-muted);
+  /* --text-secondary, not --text-muted: the pill's own "n =" text and the
+     glossary span inside it measured 3.77:1 on the key-display surface. The
+     themed sub overrides at the end of the file still refine the subscript. */
+  color: var(--text-secondary);
   font-family: 'SF Mono', 'Fira Code', Menlo, Consolas, monospace;
 }
 
@@ -1563,15 +1596,21 @@ main {
 
 .badge-ok {
   background: rgba(63, 185, 80, 0.15);
-  color: var(--security-full);
+  color: var(--security-full); /* 5.33:1 over the tinted card in dark */
   border: 1px solid var(--security-full);
 }
+/* Light's #1a7f37 measured 4.2:1 over the green tint; darken the ink only. */
+[data-theme="light"] .badge-ok { color: #15682d; } /* 5.7:1 over the tint */
 
 .badge-fail {
   background: rgba(248, 81, 73, 0.15);
-  color: var(--security-none);
+  /* Not var(--security-none): over this tint the theme reds measured 4.36:1
+     (dark #f85149) and 4.22:1 (light #cf222e). Border keeps the theme red —
+     it only has to clear the 3:1 non-text bar, which it does. */
+  color: #ff6b64; /* 5.24:1 over the tinted card in dark */
   border: 1px solid var(--security-none);
 }
+[data-theme="light"] .badge-fail { color: #b91c27; } /* 5.08:1 over the tint */
 
 /* "Not applicable" and "could not run" are NOT security verdicts, so they must
    not borrow the pass/fail colours. Deliberately neutral, and distinguished
@@ -1616,7 +1655,7 @@ main {
   justify-content: center;
   min-height: 36px;
   padding: 0.375rem 0.625rem;
-  border: 1.5px solid var(--border-color);
+  border: 1.5px solid var(--control-border);
   border-radius: 6px;
   background: var(--bg-tertiary);
   color: var(--text-primary);
@@ -1676,7 +1715,11 @@ main {
 
 .explainer-meta {
   font-size: 0.8125rem !important;
-  color: var(--text-muted) !important;
+  /* No !important on color: it outranked the themed AA overrides at the end
+     of this file, so the explainer rendered --text-muted at 3.77:1 (dark) /
+     2.89:1 (light) while the overrides sat dead. font-size keeps its
+     !important only to beat `.comparison-explainer p`'s (0,1,1) selector. */
+  color: var(--text-muted);
   margin-top: 0.75rem;
   padding-top: 0.5rem;
   border-top: 1px solid var(--border-color);
@@ -1727,7 +1770,9 @@ main {
 
 .packet-bytes {
   font-size: 0.65rem;
-  opacity: 0.75;
+  /* No opacity fade: at .75 the dark ink on the grey wg-meta blocks
+     composited to 4.21:1. Full strength is 6.15:1 there and >=5:1 on every
+     other block fill in both themes. */
 }
 
 .wg-meta { background: #8b949e; }
@@ -1795,7 +1840,7 @@ main {
   gap: 0.4rem;
   min-height: 40px;
   padding: 0.4rem 0.75rem;
-  border: 2px solid var(--border-color);
+  border: 2px solid var(--control-border);
   border-radius: 999px;
   background: var(--bg-tertiary);
   color: var(--text-primary);
@@ -1912,7 +1957,7 @@ main {
   min-width: 48px;
   min-height: 40px;
   padding: 0.4rem 0.85rem;
-  border: 2px solid var(--border-color);
+  border: 2px solid var(--control-border);
   border-radius: 8px;
   background: var(--bg-tertiary);
   color: var(--text-primary);
@@ -1946,7 +1991,7 @@ main {
 .role-btn {
   min-height: 40px;
   padding: 0.4rem 0.75rem;
-  border: 2px solid var(--border-color);
+  border: 2px solid var(--control-border);
   border-radius: 8px;
   background: var(--bg-tertiary);
   color: var(--text-primary);
@@ -2216,7 +2261,8 @@ main {
   font-size: 0.72rem;
   font-weight: 700;
 }
-.wire-block-bytes { font-size: 0.65rem; opacity: 0.85; }
+.wire-block-bytes { font-size: 0.65rem; } /* no opacity fade: at .85 the
+   .blk-tag byte counts composited to 4.43:1; full-strength ink is 5.62:1 */
 /* Use surface fills + theme ink so contrast holds in both themes. */
 .blk-e {
   background: var(--bg-tertiary);
@@ -2283,7 +2329,12 @@ main {
   border-color: var(--security-none);
   background: rgba(248, 81, 73, 0.12);
 }
-.predict-answer {
+/* p.predict-answer, not .predict-answer: `.predict-box p` is (0,1,1) and this
+   was (0,1,0), so the text-primary declared here never applied — the answer
+   rendered --text-secondary at 4.4999:1 on light's --bg-tertiary, a hair
+   under AA. Matching specificity (this rule is later in the file) makes the
+   declared color real. */
+p.predict-answer {
   margin-top: 0.6rem;
   padding: 0.5rem 0.7rem;
   border-radius: 6px;
@@ -2346,3 +2397,11 @@ main {
    background just enough to drop the muted value text and the glossary link
    under AA. Lighten the tint in light mode so both clear 4.5:1. */
 [data-theme="light"] .state-row.state-changed { background-color: rgba(63, 185, 80, 0.08); } /* state-val 4.44→4.60, .gl 4.39→4.56 */
+
+/* The h/ck/k key labels are the accent purple, and light's #8250df measured
+   4.45:1 on the green "changed" tint above — the earlier fix re-measured only
+   the BLUE glossary links. Darken the purple in light mode only; it lands at
+   5.39:1 on the tint and higher on the plain card. */
+[data-theme="light"] .state-h .state-key,
+[data-theme="light"] .state-ck .state-key,
+[data-theme="light"] .state-k .state-key { color: #7443cf; }

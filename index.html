@@ -87,7 +87,10 @@
     .cl-btn,.cl-icon{min-width:44px}
   }
 </style>
-<a class="cl-skip-link" href="#app">Skip to content</a>
+<!-- Most labs mount into a <div id="app">; this one renders into
+     <main id="main-content">, and the fleet-standard "#app" href pointed at
+     nothing here — the first Tab press on every load went to a dead anchor. -->
+<a class="cl-skip-link" href="#main-content">Skip to content</a>
 <header class="cl-topbar" role="banner" aria-label="Crypto Lab">
   <a class="cl-brand" href="https://crypto-lab.systemslibrarian.dev/" aria-label="Crypto Lab home">
     <span class="cl-badge">CL</span>
@@ -205,7 +208,10 @@
       <p>Select a Noise handshake pattern to explore its message flow and security properties. New here? Follow the guided path from the simplest handshake to WireGuard's.</p>
 
       <!-- Guided path: simplest → most complex -->
-      <div class="guided-path" aria-label="Guided learning path">
+      <!-- No aria-label on this bare div: a generic element's name is
+           prohibited and silently discarded; the labelled group inside it is
+           the accessible container. -->
+      <div class="guided-path">
         <span class="guided-path-label">Guided path:</span>
         <div id="guided-path-steps" class="guided-path-steps" role="group" aria-label="Guided path steps, simplest to most complex"></div>
       </div>
@@ -227,12 +233,12 @@
 
         <div class="pattern-section">
           <h4>Message Sequence</h4>
-          <pre id="pattern-messages" class="pattern-display" aria-label="Handshake message sequence"><code></code></pre>
+          <pre id="pattern-messages" class="pattern-display"><code></code></pre>
         </div>
 
         <div class="pattern-section">
           <h4>Security Properties</h4>
-          <div id="security-properties" aria-label="Security properties for selected pattern"></div>
+          <div id="security-properties" role="group" aria-label="Security properties for selected pattern"></div>
         </div>
 
         <div class="pattern-section vs-tls-section">
@@ -247,7 +253,7 @@
 
         <div class="pattern-section">
           <h4>Token Legend</h4>
-          <div id="token-legend" class="token-legend" aria-label="Token descriptions"></div>
+          <div id="token-legend" class="token-legend" role="group" aria-label="Token descriptions"></div>
         </div>
       </div>
     </section>
@@ -303,7 +309,12 @@
             </div>
             <div class="anatomy-emit" id="anatomy-emit">
               <span class="anatomy-emit-arrow">↓</span>
-              <span class="anatomy-emit-label">updates the <span class="gl" data-term="ck" tabindex="0">chaining key (ck)</span></span>
+              <!-- No tabindex on this glossary term: the whole stage is
+                   aria-hidden, and a focusable element inside an aria-hidden
+                   subtree is a tab stop that announces nothing. The pointer
+                   tooltip still works; keyboard users get the same ck term,
+                   focusable, in the narration and legend outside the stage. -->
+              <span class="anatomy-emit-label">updates the <span class="gl" data-term="ck">chaining key (ck)</span></span>
             </div>
           </div>
 
@@ -338,8 +349,10 @@
         </button>
       </div>
 
-      <!-- Animated message lane diagram -->
-      <div id="message-diagram" class="message-diagram" aria-label="Message direction diagram"></div>
+      <!-- Animated message lane diagram. No aria-label on the wrapper div —
+           prohibited on a generic element; the SVG inside carries role="img"
+           and a per-message label of its own. -->
+      <div id="message-diagram" class="message-diagram"></div>
 
       <!-- Segmented on-the-wire byte blocks for this message -->
       <div class="wire-blocks-wrap">
@@ -369,7 +382,7 @@
       </div>
 
       <!-- Per-party state cards -->
-      <div class="party-state-grid" aria-label="Per-party state">
+      <div class="party-state-grid" role="group" aria-label="Per-party state">
         <div class="party-card" data-role="initiator">
           <h4><span class="party-icon">🅰</span> Initiator state</h4>
           <div id="initiator-state" class="party-state-body"></div>
@@ -391,12 +404,14 @@
       <div class="transport-keys">
         <div class="key-display">
           <label class="key-label" id="send-key-label">c₁ — Initiator → Responder</label>
-          <div class="hex-value" id="transport-send-key" aria-labelledby="send-key-label"></div>
+          <!-- No aria-labelledby: naming is prohibited on a generic div and was
+               silently discarded; the visible label element above suffices. -->
+          <div class="hex-value" id="transport-send-key"></div>
           <div class="nonce-pill"><span class="gl" data-term="n">n</span><sub>i→r</sub> = <span id="i-to-r-nonce">0</span></div>
         </div>
         <div class="key-display">
           <label class="key-label" id="recv-key-label">c₂ — Responder → Initiator</label>
-          <div class="hex-value" id="transport-recv-key" aria-labelledby="recv-key-label"></div>
+          <div class="hex-value" id="transport-recv-key"></div>
           <div class="nonce-pill"><span class="gl" data-term="n">n</span><sub>r→i</sub> = <span id="r-to-i-nonce">0</span></div>
         </div>
       </div>
@@ -536,7 +551,7 @@
 
   <!-- Footer -->
   <footer class="site-footer">
-    <p class="footer-related" aria-label="Related demos">Related demos:
+    <p class="footer-related">Related demos:
       <a href="https://systemslibrarian.github.io/crypto-lab-ratchet-wire/" class="cross-badge" target="_blank" rel="noopener noreferrer">crypto-lab-ratchet-wire</a>
       <a href="https://systemslibrarian.github.io/crypto-lab-x3dh-wire/" class="cross-badge" target="_blank" rel="noopener noreferrer">crypto-lab-x3dh-wire</a>
       <a href="https://systemslibrarian.github.io/crypto-lab-hybrid-wire/" class="cross-badge" target="_blank" rel="noopener noreferrer">crypto-lab-hybrid-wire</a>

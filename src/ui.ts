@@ -506,9 +506,13 @@ function renderPatternInfo(info: PatternInfo): void {
     props.forEach(p => {
       const row = document.createElement('div');
       row.className = 'security-row';
+      // No aria-label on the value span: naming is prohibited on a generic
+      // span and silently discarded — and for the two gl()-wrapped labels the
+      // old label string interpolated raw HTML markup into the attribute. The
+      // visible label + value text already read correctly in order.
       row.innerHTML = `
         <span class="security-label">${p.label}</span>
-        <span class="security-value security-${p.value}" aria-label="${typeof p.label === 'string' ? p.label : p.key}: ${p.value}">
+        <span class="security-value security-${p.value}">
           <span class="security-icon" aria-hidden="true">${p.icon}</span>
           ${p.value}
         </span>
@@ -652,9 +656,9 @@ function renderCurrentStep(): void {
 
   let html = `
     <div class="step-header">
-      <span class="step-direction" aria-label="Direction: ${direction}">${direction}</span>
+      <span class="step-direction">${direction}</span>
     </div>
-    <div class="step-token-effects" aria-label="Tokens in this message and what each one touches">${tokenChips}</div>
+    <div class="step-token-effects" role="group" aria-label="Tokens in this message and what each one touches">${tokenChips}</div>
     <div class="step-logs" role="list" aria-label="Handshake operations for message ${currentStep + 1}">
   `;
 
@@ -772,7 +776,7 @@ function renderDHVisual(opA: string, opB: string, output?: string): string {
   };
   const outStr = output ? `${output.slice(0, 12)}…` : '';
   return `
-    <div class="dh-visual" aria-label="Diffie-Hellman: ${escapeHtml(labelA)} times ${escapeHtml(labelB)}">
+    <div class="dh-visual" role="group" aria-label="Diffie-Hellman: ${escapeHtml(labelA)} times ${escapeHtml(labelB)}">
       ${chip(labelA, hexA)}
       <span class="dh-op" aria-hidden="true">×</span>
       ${chip(labelB, hexB)}
@@ -1348,7 +1352,7 @@ export function renderWireGuardPanel(): void {
 
     <div class="wg-section">
       <h3>Pattern Structure</h3>
-      <pre class="pattern-display" aria-label="IKpsk2 handshake pattern"><code>${escapeHtml(formatPatternMessages(ikpsk2.pattern))}</code></pre>
+      <pre class="pattern-display"><code>${escapeHtml(formatPatternMessages(ikpsk2.pattern))}</code></pre>
     </div>
 
     <div class="wg-section">
@@ -1356,7 +1360,7 @@ export function renderWireGuardPanel(): void {
       <p>Each colored block maps to the Noise token(s) that produced it. Hover a block to see its origin.</p>
 
       <h4 class="packet-title">Message 1 — Initiation (148 bytes)</h4>
-      <div class="packet-diagram" aria-label="WireGuard initiation packet">
+      <div class="packet-diagram" role="group" aria-label="WireGuard initiation packet">
         ${packetBlock('type', '1', 4, 'Type byte (1) + 3 reserved bytes', 'wg-meta')}
         ${packetBlock('sender_index', '4', 4, 'Random 32-bit sender id', 'wg-meta')}
         ${packetBlock('unencrypted_ephemeral', '32', 32, 'From Noise token e — initiator ephemeral public key', 'wg-e')}
@@ -1367,7 +1371,7 @@ export function renderWireGuardPanel(): void {
       </div>
 
       <h4 class="packet-title">Message 2 — Response (92 bytes)</h4>
-      <div class="packet-diagram" aria-label="WireGuard response packet">
+      <div class="packet-diagram" role="group" aria-label="WireGuard response packet">
         ${packetBlock('type', '1', 4, 'Type byte (2) + 3 reserved bytes', 'wg-meta')}
         ${packetBlock('sender_index', '4', 4, 'Random 32-bit responder id', 'wg-meta')}
         ${packetBlock('receiver_index', '4', 4, 'Echoes initiator\'s sender id', 'wg-meta')}

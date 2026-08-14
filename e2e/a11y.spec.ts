@@ -1,82 +1,61 @@
-import AxeBuilder from '@axe-core/playwright';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+import {
+  boot,
+  driveAllStates,
+  expectBaselineNotStale,
+  NARROW,
+  reportCollected,
+  watchPageErrors,
+} from './gate';
 
 /**
- * WCAG regression gate. Deploys are already gated on functional correctness;
- * this gates them on accessibility the same way. Scans the full page with
- * every <details> and class-toggled panel expanded, in both themes.
+ * WCAG A/AA regression gate.
+ *
+ * The lab is driven along everything it teaches: the arrival state, NN
+ * selected with the pattern picker and predict quiz shut and the anatomy
+ * exhibit open; both skip links focused; the glossary tooltip summoned by
+ * keyboard; the picker opened and IK selected, which is the pattern that
+ * renders a pre-message card and an ENCRYPTED static wire block; the
+ * walkthrough stepped through both IK messages with the anatomy toggled to
+ * es-as-responder and the predict quiz answered wrongly on purpose; the
+ * transport lanes driven through a send, the empty-plaintext error branch, a
+ * rekey with its stale-readout clearing, and the reverse lane; the Break-it
+ * grid through three verdict kinds — held, succeeded, not-applicable — from
+ * real simulations plus the nonce-reuse XOR details; the comparison table
+ * with a pattern added live and a property explainer opened; the WireGuard
+ * packet diagrams; hover on the shared bar's color-mix fill and an inactive
+ * tab; focus rings on an input and a button; the number-key tab shortcut; and
+ * finally the theme switched live with the whole session still on screen.
+ * Every one of those states is scanned, in both themes, at desktop and phone
+ * width.
+ *
+ * See `gate.ts` for why nothing is injected into the page (`ui.ts` branches
+ * on a module-scope `matchMedia` read that a style tag cannot reach, so the
+ * old gate never once scanned the reduced-motion rendering), why nothing is
+ * force-revealed from script (the old `revealAll()` scanned a
+ * six-panels-at-once page the tab machinery can never produce), and why
+ * `violations` is not the whole oracle.
  */
 
-const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
-
-async function revealAll(page: Page): Promise<void> {
-  await page.addStyleTag({
-    content: `*, *::before, *::after {
-      animation: none !important;
-      transition: none !important;
-    }`,
+for (const theme of ['dark', 'light'] as const) {
+  test(`no WCAG A/AA violations in ${theme} theme`, async ({ page }) => {
+    test.setTimeout(1_800_000);
+    const errors = watchPageErrors(page);
+    await boot(page, theme);
+    await driveAllStates(page, theme);
+    expect(errors, errors.join('\n')).toEqual([]);
+    expectBaselineNotStale();
+    reportCollected();
   });
-  await page.evaluate(() => {
-    // Expand every native disclosure.
-    for (const details of Array.from(document.querySelectorAll('details'))) {
-      (details as HTMLDetailsElement).open = true;
-    }
-    // Reveal class/attribute-hidden panels, tabs, accordions, modals.
-    for (const el of Array.from(document.querySelectorAll<HTMLElement>('*'))) {
-      if (el.hasAttribute('hidden')) el.removeAttribute('hidden');
-      if (el.getAttribute('aria-hidden') === 'true') el.removeAttribute('aria-hidden');
-      const style = getComputedStyle(el);
-      if (style.display === 'none') el.style.setProperty('display', 'block', 'important');
-      if (style.visibility === 'hidden') el.style.setProperty('visibility', 'visible', 'important');
-      if (parseFloat(style.opacity) < 1) el.style.setProperty('opacity', '1', 'important');
-    }
-  });
-  // Do not un-hide the shared site header's intentionally-hidden skip link
-  // duplicate; the above only affects author-visible content once opened.
-  await page.waitForTimeout(50);
-}
 
-async function scan(page: Page): Promise<void> {
-  const results = await new AxeBuilder({ page }).withTags(TAGS).analyze();
-  const summary = results.violations.map((v) => ({
-    id: v.id,
-    impact: v.impact,
-    help: v.help,
-    nodes: v.nodes.map((n) => n.target.join(' ')).slice(0, 5),
-  }));
-  expect(summary).toEqual([]);
-}
-
-async function textInputBorderRatio(page: Page): Promise<number> {
-  return page.locator('.text-input').first().evaluate((el) => {
-    const rgb = (value: string) => value.match(/[\d.]+/g)!.slice(0, 3).map(Number);
-    const luminance = (parts: number[]) => {
-      const c = parts.map((part) => {
-        const value = part / 255;
-        return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-      });
-      return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
-    };
-    const style = getComputedStyle(el);
-    const border = luminance(rgb(style.borderTopColor));
-    const fill = luminance(rgb(style.backgroundColor));
-    return (Math.max(border, fill) + 0.05) / (Math.min(border, fill) + 0.05);
+  test(`no WCAG A/AA violations in ${theme} theme at 380px`, async ({ page }) => {
+    test.setTimeout(1_800_000);
+    const errors = watchPageErrors(page);
+    await page.setViewportSize(NARROW);
+    await boot(page, theme);
+    await driveAllStates(page, `${theme} @380px`);
+    expect(errors, errors.join('\n')).toEqual([]);
+    expectBaselineNotStale();
+    reportCollected();
   });
 }
-
-test('no WCAG A/AA violations in dark theme', async ({ page }) => {
-  await page.goto('.');
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-  await revealAll(page);
-  expect(await textInputBorderRatio(page)).toBeGreaterThanOrEqual(3);
-  await scan(page);
-});
-
-test('no WCAG A/AA violations in light theme', async ({ page }) => {
-  await page.goto('.');
-  await page.locator('#cl-theme-toggle').click();
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
-  await revealAll(page);
-  expect(await textInputBorderRatio(page)).toBeGreaterThanOrEqual(3);
-  await scan(page);
-});
