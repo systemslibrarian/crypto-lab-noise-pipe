@@ -518,9 +518,16 @@ export async function auditNonText(page: Page, within = 'body *'): Promise<NonTe
 
       const cs = styleOf(el);
       const fillOwn = ownPaint(cs, r, { x: r.left + r.width / 2, y: r.top + r.height / 2 });
-      const bw = ['Top', 'Right', 'Bottom', 'Left'].map((s) =>
-        parseFloat(cs.getPropertyValue(`border-${s.toLowerCase()}-width`) || '0')
-      );
+      // PER SIDE, not `border-top` for all four. The earlier fleet form of this
+      // read `border-*-width` on every side but then tested `border-top-style`
+      // and measured `border-top-color` alone, so it silently judged the WRONG
+      // EDGE whenever a control is delineated by one side only — elsewhere in
+      // this fleet that reported 1.12:1 for a selected tab whose entire
+      // boundary was a 3px `border-bottom` underline, the ARIA tab pattern's
+      // normal delineator. Every painted side is walked now and the best one
+      // wins, so which edge carries the boundary stays an implementation
+      // detail rather than a load-bearing assumption.
+      //
       // A border only counts if it LAYS PAINT DOWN. `.btn` and `.compare-cell`
       // here ship `border: 1px solid transparent` purely so the hover state's
       // coloured border does not shift layout — a zero-alpha edge paints
@@ -528,9 +535,14 @@ export async function auditNonText(page: Page, within = 'body *'): Promise<NonTe
       // text-identified control into a judgement SC 1.4.11 does not make. The
       // hover state, where that border becomes `--accent-primary`, IS judged:
       // the drive scans with controls hovered and the alpha is real there.
-      const borderInk = resolve(cs.borderTopColor) ?? TRANSPARENT;
-      const hasBorder =
-        bw.some((w) => w > 0) && cs.borderTopStyle !== 'none' && borderInk.a > 0;
+      const SIDES = ['top', 'right', 'bottom', 'left'] as const;
+      const paintedSides = SIDES.filter((side) => {
+        if (parseFloat(cs.getPropertyValue(`border-${side}-width`) || '0') <= 0) return false;
+        if (cs.getPropertyValue(`border-${side}-style`) === 'none') return false;
+        const c = resolve(cs.getPropertyValue(`border-${side}-color`));
+        return !!c && c.a > 0;
+      });
+      const hasBorder = paintedSides.length > 0;
       const outlineW = parseFloat(cs.outlineWidth || '0');
       const hasOutline = outlineW > 0 && cs.outlineStyle !== 'none';
 
@@ -562,8 +574,8 @@ export async function auditNonText(page: Page, within = 'body *'): Promise<NonTe
       let best = fillRatio;
       let how = `fill ${fillRatio.toFixed(2)}:1 vs surround`;
 
-      if (hasBorder) {
-        const bc = borderInk;
+      for (const side of paintedSides) {
+        const bc = resolve(cs.getPropertyValue(`border-${side}-color`)) ?? TRANSPARENT;
         // Over the element's OWN FILL, not the surround: `background-clip`
         // defaults to `border-box`, so the background really is painted
         // underneath the border. It matters wherever one translucent edge token
@@ -575,7 +587,7 @@ export async function auditNonText(page: Page, within = 'body *'): Promise<NonTe
         const borderRatio = ratio(border, surround);
         if (borderRatio > best) {
           best = borderRatio;
-          how = `border ${borderRatio.toFixed(2)}:1 vs surround`;
+          how = `border-${side} ${borderRatio.toFixed(2)}:1 vs surround`;
         }
       }
       if (hasOutline) {
