@@ -29,5 +29,4 @@ export const NONTEXT_BASELINE: Record<
    * as a deliberate fleet pass, then delete these two entries.
    */
   'control-boundary|a.cl-btn': { ratio: 2.45, required: 3.0, unverified: false },
-  'control-boundary|button#cl-theme-toggle.cl-btn.cl-icon': { ratio: 2.45, required: 3.0, unverified: false },
 };

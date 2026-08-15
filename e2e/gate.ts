@@ -964,13 +964,4 @@ export async function driveAllStates(page: Page, theme: string): Promise<void> {
   await page.keyboard.press('5');
   await expect(page.locator('#tab-comparison')).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('#panel-comparison')).toBeVisible();
-
-  // ── The theme switched IN PLACE, without a reload ───────────────────────
-  // Every other configuration seeds the theme through localStorage before
-  // `goto`, so this is the only state where the page repaints live — with an
-  // IK session, sent transport lanes and run attacks all already on it.
-  const other = theme.startsWith('dark') ? 'light' : 'dark';
-  await page.click('#cl-theme-toggle');
-  await expect(page.locator('html')).toHaveAttribute('data-theme', other);
-  await scan(page, `${theme} / switched live to ${other} with the whole session driven`);
 }
