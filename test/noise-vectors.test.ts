@@ -20,7 +20,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { x25519 } from '@noble/curves/ed25519';
+import { x25519 } from '@noble/curves/ed25519.js';
 import { HandshakeState, CipherState } from '../src/noise';
 import { PATTERNS } from '../src/patterns';
 import { fromHex, toHex, KeyPair, EMPTY } from '../src/crypto';

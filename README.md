@@ -46,6 +46,8 @@ The **Break it** panel proves security properties by live attack rather than by 
 
 ## How to Run Locally
 
+Use Node.js 24 to match the CI runtime.
+
 ```bash
 git clone https://github.com/systemslibrarian/crypto-lab-noise-pipe
 cd crypto-lab-noise-pipe

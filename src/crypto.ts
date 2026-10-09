@@ -5,7 +5,7 @@
  * https://noiseprotocol.org/noise.html
  */
 
-import { x25519 } from '@noble/curves/ed25519';
+import { x25519 } from '@noble/curves/ed25519.js';
 
 // ----- X25519 (Curve25519 DH) -----
 
