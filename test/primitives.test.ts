@@ -8,13 +8,23 @@
  * little-endian counter these expected values fail for every n >= 1.
  */
 import { describe, it, expect } from 'vitest';
-import { x25519 } from '@noble/curves/ed25519';
+import { x25519 } from '@noble/curves/ed25519.js';
 import {
   dh, DHLEN, hkdf, sha256, aesGcmEncrypt, aesGcmDecrypt,
   nonceFromCounter, toHex, fromHex, equal,
 } from '../src/crypto';
 
 describe('X25519 (RFC 7748)', () => {
+  it('rejects low-order and malformed peer keys instead of deriving a zero secret', () => {
+    const privateKey = fromHex('77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a');
+    const keyPair = { privateKey, publicKey: new Uint8Array(x25519.getPublicKey(privateKey)) };
+    const zero = new Uint8Array(32);
+    const one = new Uint8Array(32); one[0] = 1;
+    for (const peer of [zero, one, new Uint8Array(31)]) {
+      expect(() => dh(keyPair, peer)).toThrow();
+    }
+  });
+
   it('reproduces the RFC 7748 §6.1 test vector', () => {
     // Alice/Bob key pair from RFC 7748 section 6.1.
     const alicePriv = fromHex('77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a');

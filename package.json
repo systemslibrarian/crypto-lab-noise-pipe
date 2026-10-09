@@ -2,7 +2,7 @@
   "name": "crypto-lab-noise-pipe",
   "version": "1.0.0",
   "private": true,
-  "description": "Interactive demo of the Noise Protocol Framework — composable handshake patterns for secure channels",
+  "description": "Interactive demo of the Noise Protocol Framework \u2014 composable handshake patterns for secure channels",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -16,7 +16,7 @@
     "test:publish-request": "node --test tests/publish-request.node.mjs"
   },
   "dependencies": {
-    "@noble/curves": "^1.8.1"
+    "@noble/curves": "^2.4.0"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
