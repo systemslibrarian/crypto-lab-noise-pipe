@@ -1868,6 +1868,19 @@ main {
   color: var(--chip-active-text);
   border-color: var(--chip-active-bg);
 }
+/* The step number is drawn here rather than held as aria-hidden DOM text.
+   axe 4.14 compares a control's accessible name against everything a
+   SIGHTED user sees (label-content-name-mismatch, WCAG 2.5.3) while
+   excluding aria-hidden content from the NAME, so a hidden number inside
+   the button could never be matched by its label. The old .guided-path-num
+   rules below are kept so the pill keeps its shape. */
+.guided-path-step::before {
+  content: attr(data-step);
+  margin-right: 0.45rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
 .guided-path-num {
   display: inline-grid;
   place-items: center;
@@ -2417,3 +2430,14 @@ p.predict-answer {
 [data-theme="light"] .state-h .state-key,
 [data-theme="light"] .state-ck .state-key,
 [data-theme="light"] .state-k .state-key { color: #7443cf; }
+
+/* The export arrow, drawn here rather than held as DOM text, so the button's
+   name need not contain a glyph. */
+#export-transcript-btn::before { content: "\2B07\00A0"; }
+
+/* The copy glyph, drawn here rather than held as DOM text, so "Copy hex" is
+   the button's whole accessible name. */
+.copy-btn::before { content: "\01F4CB"; }
+
+/* The rekey glyphs, drawn here rather than held as DOM text. */
+#rekey-i-btn::before, #rekey-r-btn::before { content: "\21BB\00A0"; }

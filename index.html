@@ -253,8 +253,8 @@
     <section id="panel-walkthrough" role="tabpanel" aria-labelledby="tab-walkthrough" hidden>
       <div class="walkthrough-header">
         <h2>Handshake Walkthrough</h2>
-        <button id="export-transcript-btn" class="btn btn-secondary" type="button" aria-label="Download full session state as JSON, including private keys and session secrets" title="This teaching export contains the session's private keys, PSK, chaining keys and transport keys — it is not a shareable public transcript.">
-          ⬇ Export session state (JSON, includes secrets)
+        <button id="export-transcript-btn" class="btn btn-secondary" type="button" aria-label="Export session state (JSON, includes secrets): downloads the full session state, private keys and session secrets included" title="This teaching export contains the session's private keys, PSK, chaining keys and transport keys — it is not a shareable public transcript.">
+          Export session state (JSON, includes secrets)
         </button>
       </div>
       <p>Step through each handshake message to see DH operations, key evolution, and hash updates.</p>
@@ -408,8 +408,8 @@
       </div>
 
       <div class="rekey-row">
-        <button id="rekey-i-btn" class="btn btn-secondary" type="button" aria-label="Rekey initiator send cipher">↻ Rekey c₁</button>
-        <button id="rekey-r-btn" class="btn btn-secondary" type="button" aria-label="Rekey responder send cipher">↻ Rekey c₂</button>
+        <button id="rekey-i-btn" class="btn btn-secondary" type="button" aria-label="Rekey c₁: the initiator send cipher">Rekey c₁</button>
+        <button id="rekey-r-btn" class="btn btn-secondary" type="button" aria-label="Rekey c₂: the responder send cipher">Rekey c₂</button>
         <button id="reset-transport-btn" class="btn btn-secondary" type="button" aria-label="Start a new session with fresh keys">⟲ New session</button>
       </div>
 

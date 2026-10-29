@@ -392,8 +392,14 @@ function setupGuidedPath(): void {
     btn.type = 'button';
     btn.className = 'guided-path-step';
     btn.dataset.pattern = name;
-    btn.setAttribute('aria-label', `Guided step ${i + 1}: ${name} pattern`);
-    btn.innerHTML = `<span class="guided-path-num" aria-hidden="true">${i + 1}</span>${escapeHtml(name)}`;
+    btn.setAttribute('aria-label', `${name}: guided step ${i + 1}, the ${name} pattern`);
+    // The step number is drawn from CSS, not held as text. axe 4.14 compares
+    // a control's accessible name against everything a SIGHTED user sees
+    // (label-content-name-mismatch, WCAG 2.5.3 Label in Name) while
+    // excluding aria-hidden content from the NAME, so an aria-hidden number
+    // inside the button can never be matched by any label.
+    btn.dataset.step = String(i + 1);
+    btn.textContent = name;
     btn.addEventListener('click', () => selectPattern(name));
     row.appendChild(btn);
   });
@@ -676,7 +682,7 @@ function renderCurrentStep(): void {
         `<div class="detail-row">
           <span class="detail-key">${escapeHtml(k)}:</span>
           <span class="detail-value hex-value" title="${escapeHtml(v)}">${escapeHtml(v)}</span>
-          <button class="copy-btn" data-copy="${escapeHtml(v)}" aria-label="Copy hex" type="button">📋</button>
+          <button class="copy-btn" data-copy="${escapeHtml(v)}" aria-label="Copy hex" type="button"></button>
         </div>`
       ).join('');
 
