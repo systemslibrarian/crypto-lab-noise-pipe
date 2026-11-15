@@ -84,6 +84,32 @@ describe('mutual-auth patterns learn the correct static keys', () => {
   }
 });
 
+describe('a bare `-> e` leaves message 1 in the clear (spec §7.7 destination 0)', () => {
+  // The README used to offer XX and NX as the fix for a first payload without
+  // forward secrecy. Their message 1 is `-> e`: no DH has run, no key exists,
+  // and §7.7 grades the payload source 0 / destination 0 — sent in cleartext.
+  // The first ENCRYPTED payload is message 2, keyed after `ee`. Both halves are
+  // asserted here, so neither sentence can drift back.
+  for (const name of ['XX', 'NX'] as const) {
+    it(`${name}: message 1 carries its payload verbatim, message 2 does not`, async () => {
+      const pattern = PATTERNS[name].pattern;
+      const initiator = new HandshakeState();
+      await initiator.initialize(pattern, true, EMPTY, name === 'XX' ? generateKeyPair() : null);
+      const responder = new HandshakeState();
+      await responder.initialize(pattern, false, EMPTY, generateKeyPair());
+
+      const payload1 = new TextEncoder().encode('message-1-payload');
+      const m1 = await initiator.writeMessage(payload1);
+      expect(toHex(m1.messageBuffer!)).toContain(toHex(payload1));
+      await responder.readMessage(m1.messageBuffer!);
+
+      const payload2 = new TextEncoder().encode('message-2-payload');
+      const m2 = await responder.writeMessage(payload2);
+      expect(toHex(m2.messageBuffer!)).not.toContain(toHex(payload2));
+    });
+  }
+});
+
 describe('transport tampering is rejected (AEAD integrity)', () => {
   it('a single flipped bit fails decryption', async () => {
     const r = await runFullHandshake(PATTERNS.XX.pattern);

@@ -295,7 +295,7 @@ export const PATTERNS: Record<string, PatternInfo> = {
     security: { senderAuth: 'mutual', forwardSecrecy: 'full', identityHiding: 'both' },
     description: 'Initiator static known, responder sends static during handshake. Neither identity appears in cleartext.',
     realWorld: 'Authenticated sessions with responder privacy',
-    vsTLS: 'TLS always reveals server identity in cleartext SNI/cert. Noise KX hides the responder behind the handshake key schedule.',
+    vsTLS: 'TLS 1.3 encrypts the server certificate along with every handshake message after ServerHello (RFC 9846 §1.3); what stays in the clear is the server name in the ClientHello — "perhaps the most sensitive information left unencrypted in TLS 1.3" (RFC 9849 §1) — unless Encrypted Client Hello is used. Noise KX carries no server name and sends the responder static encrypted in message 2.',
     specNotes: {
       identityHiding: 'The initiator\'s static key is pre-shared; the responder\'s is sent encrypted in message 2. Spec §7.8 grades the initiator 7 and the responder 6 — the responder\'s key has only weak forward secrecy, so an active attacker who later learns the initiator\'s private key can decrypt it from a recorded run.'
     }
@@ -315,7 +315,7 @@ export const PATTERNS: Record<string, PatternInfo> = {
     security: { senderAuth: 'mutual', forwardSecrecy: 'partial', identityHiding: 'both' },
     description: 'Responder key known in advance, initiator sends static encrypted in message 3. Best identity hiding of the pre-shared-responder patterns.',
     realWorld: 'Signal X3DH-like flows, connecting to known server with client auth',
-    vsTLS: 'TLS 1.3 with client cert — but the client cert is sent in cleartext to anyone holding the server key. XK encrypts it.',
+    vsTLS: 'TLS 1.3 with client cert — which TLS 1.3 also encrypts, like every handshake message after ServerHello (RFC 9846 §1.3). XK\'s difference is what is pre-shared: the responder static is known in advance, so there is no certificate chain and no server name in the clear, and the initiator static goes out encrypted in message 3.',
     specNotes: {
       forwardSecrecy: 'Message 1 is `e, es`: its payload is encrypted before `ee` runs and is graded destination 2, so a later compromise of the responder\'s static key decrypts any recorded first-message payload. Messages 2 and 3 and all transport keys are fully forward secret.',
       identityHiding: 'The initiator\'s static key goes out encrypted in message 3, after the responder is authenticated — spec §7.8 grade 8, the strongest in the table. The responder\'s is pre-shared, graded 3 (a passive attacker can confirm a guessed responder private key). This is why Lightning BOLT #8 picked XK.'
